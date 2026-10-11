@@ -114,7 +114,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
                     content: content,
                     trigger: trigger
                 )
-                center.add(request)
+                try? await center.add(request)
             }
         }
     }
