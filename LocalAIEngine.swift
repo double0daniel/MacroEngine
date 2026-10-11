@@ -1,6 +1,6 @@
 import Foundation
 
-/// Generates immediate, offline Macro coaching replies from the current telemetry.
+/// Generates Macro's fitness coaching reply using Groq with a local offline fallback.
 enum LocalAIEngine {
     static func generateInsight(
         for query: String,
@@ -15,10 +15,10 @@ enum LocalAIEngine {
         let remainingCalories = remainingCals
         let proteinRemainingGrams = remainingProtein
         let userQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return OfflineQueryResponder.response(
-            for: userQuery,
+        return await SmolLMInferenceService.shared.generateResponse(
             remainingCalories: remainingCalories,
-            remainingProtein: proteinRemainingGrams
+            remainingProtein: proteinRemainingGrams,
+            userQuery: userQuery
         )
     }
 

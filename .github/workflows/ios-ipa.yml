@@ -14,11 +14,6 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      - name: Pull Git LFS assets
-        run: git lfs pull
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -27,6 +22,8 @@ jobs:
         run: xcodegen generate
 
       - name: Build unsigned iPhone app
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           set -euo pipefail
           xcodebuild \
@@ -36,6 +33,7 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            GROQ_API_KEY="$GROQ_API_KEY" \
             CODE_SIGNING_ALLOWED=NO \
             build
 
