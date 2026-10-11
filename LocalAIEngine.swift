@@ -14,11 +14,12 @@ enum LocalAIEngine {
     ) async -> String {
         let remainingCalories = remainingCals
         let proteinRemainingGrams = remainingProtein
+        let foodFits = remainingCalories >= 400
         let prompt = """
         <|im_start|>system
-        You are MacroEngine's UK fitness coach. Provide concise, helpful fitness/macro advice in exactly ONE sentence (around 20 words). Never output multiple sentences or line breaks.<|im_end|>
+        You are MacroEngine's UK fitness coach. Provide ONE concise fitness/macro tip in 1 short sentence (around 15-20 words). Never generate multiple sentences.<|im_end|>
         <|im_start|>user
-        Telemetry: \(remainingCalories) kcal, \(proteinRemainingGrams)g protein. \(query)<|im_end|>
+        Telemetry: \(remainingCalories) kcal, \(proteinRemainingGrams)g protein left. Fits budget: \(foodFits ? "Yes" : "No"). \(query)<|im_end|>
         <|im_start|>assistant
         """
         return await SmolLMInferenceService.shared.generateResponse(prompt: prompt)

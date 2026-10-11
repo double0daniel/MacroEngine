@@ -11,6 +11,7 @@ private final class SmolLMInferenceRace: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<String?, Never>?
     private var inferenceTask: Task<Void, Never>?
+    private var timeoutTask: Task<Void, Never>?
     private var finished = false
 
     func install(_ continuation: CheckedContinuation<String?, Never>) {
@@ -35,6 +36,17 @@ private final class SmolLMInferenceRace: @unchecked Sendable {
         }
     }
 
+    func installTimeout(_ timeoutTask: Task<Void, Never>) {
+        lock.lock()
+        if finished {
+            lock.unlock()
+            timeoutTask.cancel()
+        } else {
+            self.timeoutTask = timeoutTask
+            lock.unlock()
+        }
+    }
+
     func finish(_ value: String?) {
         lock.lock()
         guard !finished else {
@@ -43,10 +55,30 @@ private final class SmolLMInferenceRace: @unchecked Sendable {
         }
         finished = true
         let continuation = self.continuation
+        let timeoutTask = self.timeoutTask
         self.continuation = nil
+        self.timeoutTask = nil
         inferenceTask = nil
         lock.unlock()
+        timeoutTask?.cancel()
         continuation?.resume(returning: value)
+    }
+
+    func timeout() {
+        lock.lock()
+        guard !finished else {
+            lock.unlock()
+            return
+        }
+        finished = true
+        let continuation = self.continuation
+        let inferenceTask = self.inferenceTask
+        self.continuation = nil
+        self.inferenceTask = nil
+        timeoutTask = nil
+        lock.unlock()
+        inferenceTask?.cancel()
+        continuation?.resume(returning: nil)
     }
 
     func cancel() {
@@ -58,17 +90,21 @@ private final class SmolLMInferenceRace: @unchecked Sendable {
         finished = true
         let continuation = self.continuation
         let inferenceTask = self.inferenceTask
+        let timeoutTask = self.timeoutTask
         self.continuation = nil
         self.inferenceTask = nil
+        self.timeoutTask = nil
         lock.unlock()
         inferenceTask?.cancel()
+        timeoutTask?.cancel()
         continuation?.resume(returning: nil)
     }
 }
 
 private enum SmolLMModelRunner {
     private static let maximumContextTokens = 128
-    private static let maximumGenerationTokens = 35
+    private static let maximumGenerationTokens = 25
+    private static let maximumGenerationDuration = 6.0
 
     static func generate(prompt: String, model: MLModel, tokenizer: SmolLMTokenizer) throws -> String? {
         guard #available(iOS 18.0, *) else { return nil }
@@ -83,8 +119,10 @@ private enum SmolLMModelRunner {
         var nextInputTokens = inputTokens
         var pastTokenCount = 0
         var generated: [Int] = []
+        let generationStart = ProcessInfo.processInfo.systemUptime
         for _ in 0..<maximumGenerationTokens {
             guard !Task.isCancelled else { return nil }
+            guard ProcessInfo.processInfo.systemUptime - generationStart < maximumGenerationDuration else { break }
             guard pastTokenCount + nextInputTokens.count <= maximumContextTokens else { break }
             let ids = try tokenArray(nextInputTokens)
             let mask = try causalMask(
@@ -96,13 +134,21 @@ private enum SmolLMModelRunner {
                 "input_ids": ids,
                 "causal_mask": mask
             ])
-            let output = try model.prediction(from: provider, using: state)
+            let output: MLFeatureProvider
+            do {
+                output = try model.prediction(from: provider, using: state)
+            } catch {
+                print("MacroEngine Core ML prediction failed: \(error)")
+                return nil
+            }
             guard !Task.isCancelled else { return nil }
+            guard ProcessInfo.processInfo.systemUptime - generationStart < maximumGenerationDuration else { break }
             guard let logits = output.featureValue(for: "logits")?.multiArrayValue else { return nil }
 
             let position = nextInputTokens.count - 1
             let nextToken = greedyToken(logits, position: position)
-            if nextToken == tokenizer.endOfTextID || nextToken == tokenizer.endOfTurnID { break }
+            if nextToken == 151_645 || nextToken == 151_643
+                || nextToken == tokenizer.endOfTextID || nextToken == tokenizer.endOfTurnID { break }
             generated.append(nextToken)
 
             if generated.count >= 5, endsFirstSentence(tokenizer.decode(generated)) { break }
@@ -186,28 +232,28 @@ final class SmolLMInferenceService: ObservableObject {
     static let shared = SmolLMInferenceService()
 
     @Published private(set) var isModelLoaded = false
+    @Published private(set) var isModelUnavailable = false
 
     private var assets: SmolLMLoadedAssets?
     private var loadingTask: Task<SmolLMLoadedAssets?, Never>?
 
-    private init() {
-        Task { [weak self] in
-            _ = await self?.loadAssetsIfNeeded()
-        }
-    }
+    private init() {}
 
-    /// Runs sampled autoregressive prediction away from the main thread.
+    /// Lazily loads assets for the first query and runs greedy prediction away from the main thread.
     /// The Qwen graph accepts sequences up to 2,048 tokens; this service caps
     /// each prompt plus response at 128 tokens.
     func generateResponse(prompt: String) async -> String {
         let fallback = telemetryFallback(from: prompt)
-        guard let loadedAssets = await loadAssetsIfNeeded() else { return fallback }
-
         let race = SmolLMInferenceRace()
         let result = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 race.install(continuation)
-                let inferenceTask = Task.detached(priority: .userInitiated) {
+                let inferenceTask = Task.detached(priority: .userInitiated) { [weak self] in
+                    guard let self, let loadedAssets = await self.loadAssetsIfNeeded() else {
+                        race.finish(nil)
+                        return
+                    }
+                    guard !Task.isCancelled else { return }
                     do {
                         let response = try SmolLMModelRunner.generate(
                             prompt: prompt,
@@ -220,6 +266,12 @@ final class SmolLMInferenceService: ObservableObject {
                     }
                 }
                 race.install(inferenceTask)
+                let timeoutTask = Task.detached(priority: .userInitiated) {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    race.timeout()
+                }
+                race.installTimeout(timeoutTask)
             }
         } onCancel: {
             // Return to the UI immediately, then stop the detached decode after
@@ -252,7 +304,7 @@ final class SmolLMInferenceService: ObservableObject {
         if let assets { return assets }
         if let loadingTask { return await loadingTask.value }
 
-        let task = Task.detached(priority: .utility) { () -> SmolLMLoadedAssets? in
+        let task = Task.detached(priority: .userInitiated) { () -> SmolLMLoadedAssets? in
             guard
                 let modelURL = Bundle.main.url(
                     forResource: "Qwen2.5-0.5B-Instruct-4bit",
@@ -273,6 +325,7 @@ final class SmolLMInferenceService: ObservableObject {
                 let model = try MLModel(contentsOf: modelURL, configuration: configuration)
                 return SmolLMLoadedAssets(model: model, tokenizer: tokenizer)
             } catch {
+                print("MacroEngine could not load the Qwen Core ML model: \(error)")
                 return nil
             }
         }
@@ -281,6 +334,7 @@ final class SmolLMInferenceService: ObservableObject {
         loadingTask = nil
         assets = loaded
         isModelLoaded = loaded != nil
+        isModelUnavailable = loaded == nil
         return loaded
     }
 
