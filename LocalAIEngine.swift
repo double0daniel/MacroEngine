@@ -1,6 +1,6 @@
 import Foundation
 
-/// Generates Macro's replies with the bundled on-device Qwen model.
+/// Generates immediate, offline Macro coaching replies from the current telemetry.
 enum LocalAIEngine {
     static func generateInsight(
         for query: String,
@@ -15,19 +15,10 @@ enum LocalAIEngine {
         let remainingCalories = remainingCals
         let proteinRemainingGrams = remainingProtein
         let userQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let prompt = """
-        <|im_start|>system
-        You are MacroEngine's UK fitness coach. Give ONE concise sentence (max 15 words) recommending a high-protein snack or meal.<|im_end|>
-        <|im_start|>user
-        Query: \(userQuery)
-        Remaining: \(remainingCalories) kcal, \(proteinRemainingGrams)g protein.<|im_end|>
-        <|im_start|>assistant
-        """
-        return await SmolLMInferenceService.shared.generateResponse(
-            prompt: prompt,
+        return OfflineQueryResponder.response(
+            for: userQuery,
             remainingCalories: remainingCalories,
-            remainingProtein: proteinRemainingGrams,
-            userQuery: userQuery
+            remainingProtein: proteinRemainingGrams
         )
     }
 

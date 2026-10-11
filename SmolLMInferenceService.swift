@@ -2,6 +2,35 @@ import Combine
 import CoreML
 import Foundation
 
+enum OfflineQueryResponder {
+    static func response(
+        for userQuery: String,
+        remainingCalories: Int,
+        remainingProtein: Int
+    ) -> String {
+        let query = userQuery.lowercased()
+            .replacingOccurrences(of: "'", with: "")
+            .replacingOccurrences(of: "’", with: "")
+
+        if ["rollover", "roll over", "weekly budget", "carry over"].contains(where: { query.contains($0) }) {
+            return "Unused calories from yesterday roll over across your remaining week so you can stay on target overall!"
+        }
+        if ["track", "progress", "on track", "doing today", "how am i"].contains(where: { query.contains($0) }) {
+            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left today. Focus on hitting your protein target!"
+        }
+        if ["workout", "exercise", "cardio", "gym", "burn", "burned"].contains(where: { query.contains($0) }) {
+            return "Logged workouts add burned calories back into your daily net budget to fuel your recovery properly."
+        }
+        if ["pizza", "burger", "takeaway", "nandos", "mcdonalds", "junk", "cheat"].contains(where: { query.contains($0) }) {
+            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left. Enjoy it as long as it fits your calorie budget!"
+        }
+        if ["snack", "protein", "food", "eat", "hungry", "meal", "breakfast", "lunch", "dinner"].contains(where: { query.contains($0) }) {
+            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein remaining. Try Greek yogurt, eggs, or chicken breast!"
+        }
+        return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left today. Prioritize lean protein to hit your daily goal!"
+    }
+}
+
 private struct SmolLMLoadedAssets: @unchecked Sendable {
     let model: MLModel
     let tokenizer: SmolLMTokenizer
@@ -304,7 +333,7 @@ final class SmolLMInferenceService: ObservableObject {
             race.cancel()
         }
         guard let result else {
-            return queryAwareFallback(
+            return OfflineQueryResponder.response(
                 for: userQuery,
                 remainingCalories: remainingCalories,
                 remainingProtein: remainingProtein
@@ -313,28 +342,13 @@ final class SmolLMInferenceService: ObservableObject {
         let response = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard result.tokenCount > 0, !response.isEmpty else {
             print("Qwen produced empty generation")
-            return queryAwareFallback(
+            return OfflineQueryResponder.response(
                 for: userQuery,
                 remainingCalories: remainingCalories,
                 remainingProtein: remainingProtein
             )
         }
         return response
-    }
-
-    private func queryAwareFallback(
-        for userQuery: String,
-        remainingCalories: Int,
-        remainingProtein: Int
-    ) -> String {
-        let query = userQuery.lowercased()
-        if ["pizza", "burger", "fast food", "junk"].contains(where: { query.contains($0) }) {
-            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left. Pizza fits if you keep it under your calorie budget and pair it with a protein side!"
-        }
-        if ["snack", "protein", "food"].contains(where: { query.contains($0) }) {
-            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left. Try 200g Greek yogurt, a whey shake, or 3 boiled eggs for a quick protein hit."
-        }
-        return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left. Prioritize lean protein to hit your daily target!"
     }
 
     private func loadAssetsIfNeeded() async -> SmolLMLoadedAssets? {
