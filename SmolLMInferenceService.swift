@@ -67,6 +67,11 @@ private final class SmolLMInferenceRace: @unchecked Sendable {
 }
 
 private enum SmolLMModelRunner {
+    private static let maximumGenerationTokens = 40
+    private static let temperature = 0.7
+    private static let topP = 0.9
+    private static let repetitionPenalty = 1.15
+
     static func generate(prompt: String, model: MLModel, tokenizer: SmolLMTokenizer) throws -> String? {
         let contextLimit = 32
         let inputTokens = tokenizer.encodePrompt(prompt, maxTokens: contextLimit)
@@ -74,7 +79,7 @@ private enum SmolLMModelRunner {
         let boundedInputTokens = Array(inputTokens.suffix(contextLimit))
 
         var generated: [Int] = []
-        for _ in 0..<24 {
+        for _ in 0..<maximumGenerationTokens {
             guard !Task.isCancelled else { return nil }
             let context = Array((boundedInputTokens + generated).suffix(contextLimit))
             let paddedTokens = context + Array(repeating: 0, count: contextLimit - context.count)
@@ -102,29 +107,80 @@ private enum SmolLMModelRunner {
             guard let logits = output.featureValue(for: "logits")?.multiArrayValue else { return nil }
 
             let position = context.count - 1
-            let nextToken = argmax(logits, position: position)
+            let nextToken = sample(
+                logits,
+                position: position,
+                generated: generated,
+                temperature: temperature,
+                topP: topP,
+                repetitionPenalty: repetitionPenalty
+            )
             if nextToken == tokenizer.endOfTextID || nextToken == tokenizer.endOfTurnID { break }
             generated.append(nextToken)
+
+            let decoded = tokenizer.decode(generated)
+            if decoded.contains("\n") || decoded.contains(".") { break }
         }
 
-        let answer = tokenizer.decode(generated).trimmingCharacters(in: .whitespacesAndNewlines)
+        let answer = firstSentence(tokenizer.decode(generated))
         guard !answer.isEmpty, answer.count <= 600 else { return nil }
         return answer
     }
 
-    private static func argmax(_ logits: MLMultiArray, position: Int) -> Int {
+    private static func sample(
+        _ logits: MLMultiArray,
+        position: Int,
+        generated: [Int],
+        temperature: Double,
+        topP: Double,
+        repetitionPenalty: Double
+    ) -> Int {
         let vocabularySize = logits.shape.last?.intValue ?? 0
         guard vocabularySize > 0 else { return 0 }
-        var bestToken = 0
-        var bestValue = -Double.infinity
+        let repeatedTokens = Set(generated)
+        var candidates: [(token: Int, logit: Double)] = []
+        candidates.reserveCapacity(vocabularySize)
         for token in 0..<vocabularySize {
-            let value = logits[[NSNumber(value: 0), NSNumber(value: position), NSNumber(value: token)]].doubleValue
-            if value > bestValue {
-                bestValue = value
-                bestToken = token
+            var value = logits[[NSNumber(value: 0), NSNumber(value: position), NSNumber(value: token)]].doubleValue
+            guard value.isFinite else { continue }
+            if repeatedTokens.contains(token) {
+                value = value >= 0 ? value / repetitionPenalty : value * repetitionPenalty
             }
+            candidates.append((token, value / temperature))
         }
-        return bestToken
+        guard !candidates.isEmpty else { return 0 }
+
+        candidates.sort { $0.logit > $1.logit }
+        let maxLogit = candidates[0].logit
+        let weights = candidates.map { exp($0.logit - maxLogit) }
+        let totalWeight = weights.reduce(0, +)
+        guard totalWeight.isFinite, totalWeight > 0 else { return candidates[0].token }
+
+        var nucleus: [(token: Int, weight: Double)] = []
+        var cumulativeWeight = 0.0
+        for (candidate, weight) in zip(candidates, weights) {
+            nucleus.append((candidate.token, weight))
+            cumulativeWeight += weight
+            if cumulativeWeight / totalWeight >= topP { break }
+        }
+
+        let nucleusWeight = nucleus.reduce(0) { $0 + $1.weight }
+        var draw = Double.random(in: 0..<nucleusWeight)
+        for candidate in nucleus {
+            draw -= candidate.weight
+            if draw <= 0 { return candidate.token }
+        }
+        return nucleus.last?.token ?? candidates[0].token
+    }
+
+    private static func firstSentence(_ text: String) -> String {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let line = cleaned.components(separatedBy: .newlines).first ?? cleaned
+        let sentence = line.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? line
+        let words = sentence.split(whereSeparator: \.isWhitespace).prefix(15)
+        let result = words.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !result.isEmpty else { return "" }
+        return result.hasSuffix(".") ? result : result + "."
     }
 }
 
@@ -194,7 +250,7 @@ final class SmolLMInferenceService: ObservableObject {
 
         let calorieStatus = calories < 0 ? "\(abs(calories)) kcal over" : "\(calories) kcal left"
         let proteinStatus = protein < 0 ? "\(abs(protein)) g over your protein target" : "\(protein) g protein left"
-        return "You've got \(calorieStatus) and \(proteinStatus) today. Use that to guide your next meal."
+        return "Today: \(calorieStatus), \(proteinStatus). Keep your next meal balanced."
     }
 
     private func loadAssetsIfNeeded() async -> SmolLMLoadedAssets? {
@@ -276,6 +332,7 @@ private struct SmolLMTokenizer: Sendable {
     private let mergeRanks: [String: Int]
     private let byteToUnicode: [UInt8: UnicodeScalar]
     private let unicodeToByte: [UnicodeScalar: UInt8]
+    private let specialTokenIDs: [String: Int]
     let endOfTextID: Int
     let endOfTurnID: Int
 
@@ -290,11 +347,42 @@ private struct SmolLMTokenizer: Sendable {
         byteToUnicode = maps.forward
         unicodeToByte = maps.reverse
         let specials = Dictionary(uniqueKeysWithValues: file.addedTokens.map { ($0.content, $0.id) })
+        specialTokenIDs = specials
         endOfTextID = specials["<|endoftext|>"] ?? 0
         endOfTurnID = specials["<|im_end|>"] ?? 2
     }
 
     func encode(_ text: String) -> [Int] {
+        let specialTokens = specialTokenIDs.keys.sorted { $0.count > $1.count }
+        var result: [Int] = []
+        var cursor = text.startIndex
+
+        while cursor < text.endIndex {
+            var nextMatch: (range: Range<String.Index>, token: String)?
+            for specialToken in specialTokens {
+                guard let range = text.range(of: specialToken, range: cursor..<text.endIndex) else { continue }
+                if nextMatch == nil || range.lowerBound < nextMatch!.range.lowerBound {
+                    nextMatch = (range, specialToken)
+                }
+            }
+
+            guard let nextMatch else {
+                result.append(contentsOf: encodeOrdinary(String(text[cursor...])))
+                break
+            }
+
+            if cursor < nextMatch.range.lowerBound {
+                result.append(contentsOf: encodeOrdinary(String(text[cursor..<nextMatch.range.lowerBound])))
+            }
+            if let tokenID = specialTokenIDs[nextMatch.token] {
+                result.append(tokenID)
+            }
+            cursor = nextMatch.range.upperBound
+        }
+        return result
+    }
+
+    private func encodeOrdinary(_ text: String) -> [Int] {
         let pattern = #"(?i:'s|'t|'re|'ve|'m|'ll|'d)| ?\p{L}+| ?\p{N}| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"#
         guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
@@ -308,26 +396,32 @@ private struct SmolLMTokenizer: Sendable {
 
     func encodePrompt(_ prompt: String, maxTokens: Int) -> [Int] {
         guard
-            let queryMarker = prompt.range(of: "Query: '", options: .caseInsensitive),
-            let answerMarker = prompt.range(of: "Short answer:", options: .caseInsensitive),
-            queryMarker.upperBound <= answerMarker.lowerBound
+            let userMarker = prompt.range(of: "<|im_start|>user\n"),
+            let telemetryMarker = prompt.range(of: "Telemetry:", options: .caseInsensitive, range: prompt.startIndex..<userMarker.lowerBound),
+            let assistantMarker = prompt.range(of: "<|im_end|>\n<|im_start|>assistant\n", range: userMarker.upperBound..<prompt.endIndex)
         else {
             return Array(encode(prompt).suffix(maxTokens))
         }
 
-        let telemetryPrefix = encode(String(prompt[..<queryMarker.lowerBound]))
-        let queryLead = encode(String(prompt[queryMarker.lowerBound..<queryMarker.upperBound]))
-        let queryTokens = encode(String(prompt[queryMarker.upperBound..<answerMarker.lowerBound]))
-        let answerLead = encode(String(prompt[answerMarker.lowerBound...]))
+        let ruleTokens = encode(String(prompt[..<telemetryMarker.lowerBound]))
+        let telemetryTokens = encode(String(prompt[telemetryMarker.lowerBound..<userMarker.lowerBound]))
+        let userHeaderTokens = encode(String(prompt[userMarker.lowerBound..<userMarker.upperBound]))
+        let queryTokens = encode(String(prompt[userMarker.upperBound..<assistantMarker.lowerBound]))
+        let assistantHeaderTokens = encode(String(prompt[assistantMarker.lowerBound...]))
 
-        // Keep the live telemetry at the end of the prefix and reserve space for
-        // the user's query and answer cue in the model's fixed 32-token context.
-        let queryBudget = min(16, queryTokens.count)
-        let prefixBudget = max(0, maxTokens - queryLead.count - answerLead.count - queryBudget)
-        let boundedPrefix = Array(telemetryPrefix.suffix(prefixBudget))
-        let availableForQuery = max(0, maxTokens - boundedPrefix.count - queryLead.count - answerLead.count)
-        let boundedQuery = Array(queryTokens.prefix(availableForQuery))
-        return Array((boundedPrefix + queryLead + boundedQuery + answerLead).prefix(maxTokens))
+        // The source prompt retains the full ChatML rules. For this fixed 32-token
+        // graph, prioritize the live telemetry and query while retaining the
+        // opening rules and all required ChatML role boundaries where possible.
+        let available = max(0, maxTokens - userHeaderTokens.count - assistantHeaderTokens.count)
+        let queryBudget = min(12, min(queryTokens.count, max(0, available - min(10, telemetryTokens.count))))
+        let telemetryBudget = min(10, min(telemetryTokens.count, max(0, available - queryBudget)))
+        let ruleBudget = min(ruleTokens.count, max(0, available - queryBudget - telemetryBudget))
+
+        return Array((Array(ruleTokens.prefix(ruleBudget))
+            + Array(telemetryTokens.suffix(telemetryBudget))
+            + userHeaderTokens
+            + Array(queryTokens.prefix(queryBudget))
+            + assistantHeaderTokens).prefix(maxTokens))
     }
 
     func decode(_ ids: [Int]) -> String {

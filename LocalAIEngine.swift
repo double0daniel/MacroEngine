@@ -16,7 +16,18 @@ enum LocalAIEngine {
         let remainingCalories = remainingCals
         let proteinRemainingGrams = remainingProtein
         let foodFits = remainingCalories >= 400
-        let prompt = "Mascot. Rem: \(remainingCalories)kcal, \(proteinRemainingGrams)g protein. Fit: \(foodFits ? "Yes" : "No"). Query: '\(query)'. Short answer:"
+        let prompt = """
+        <|im_start|>system
+        You are MacroEngine's concise UK fitness mascot.
+        Rules:
+        - Answer in 1 short sentence (max 15 words).
+        - Never repeat the prompt, stats, or previous words.
+        - Be direct, conversational, and encouraging.
+        Telemetry: \(remainingCalories) kcal, \(proteinRemainingGrams)g protein left. Fits budget: \(foodFits ? "Yes" : "No").<|im_end|>
+        <|im_start|>user
+        \(query)<|im_end|>
+        <|im_start|>assistant
+        """
         return await SmolLMInferenceService.shared.generateResponse(prompt: prompt)
     }
 
