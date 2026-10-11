@@ -72,6 +72,7 @@ targets:
       properties:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).MacroEngineWidgetBundle"
 
   MacroEngineTests:
     type: bundle.unit-test
