@@ -627,9 +627,11 @@ final class DiaryStore {
                                   customMealID: customMealID, customMealName: customMealName))
         save(entries, key: Key.entries)
         syncWidgetData()
+        NotificationManager.shared.mealWasLogged(category: category, date: date)
     }
 
     func log(_ meal: CustomMeal, category: MealCategory, date: Date = .now) {
+        let startingCount = entries.count
         for ingredient in meal.ingredients {
             guard ingredient.grams.isFinite, ingredient.grams > 0 else { continue }
             entries.append(DiaryEntry(food: ingredient.food, grams: ingredient.grams, date: date,
@@ -637,6 +639,9 @@ final class DiaryStore {
         }
         save(entries, key: Key.entries)
         syncWidgetData()
+        if entries.count > startingCount {
+            NotificationManager.shared.mealWasLogged(category: category, date: date)
+        }
     }
 
     func remove(_ entry: DiaryEntry) {
@@ -919,6 +924,7 @@ final class DiaryStore {
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("macroengine.") {
             defaults.removeObject(forKey: key)
         }
+        NotificationManager.shared.disableReminders()
         defaults.removeObject(forKey: "userName")
         WidgetDataManager.shared.reset()
 

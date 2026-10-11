@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var fat = "65"
     @State private var showingDashboardLayout = false
     @State private var showingResetConfirmation = false
+    @State private var smartPushRemindersEnabled = false
     @FocusState private var isFocused: Bool
 
     private var baseProfile: UserProfile {
@@ -67,6 +68,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         goalCard
                         rolloverCard
+                        smartPushRemindersCard
                         macroCard
                         dashboardLayoutCard
                         note
@@ -252,6 +254,40 @@ struct SettingsView: View {
         .card()
     }
 
+    private var smartPushRemindersCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Smart Push Reminders", systemImage: "bell.badge")
+                .font(.meHeadline)
+                .foregroundStyle(Slate.textPrimary)
+
+            Toggle(isOn: Binding(
+                get: { smartPushRemindersEnabled },
+                set: { enabled in
+                    smartPushRemindersEnabled = enabled
+                    let userName = UserDefaults.standard.string(forKey: "userName") ?? ""
+                    let loggedCategories = Set(diary.todaysEntries.map(\.category))
+                    Task {
+                        smartPushRemindersEnabled = await NotificationManager.shared.setEnabled(
+                            enabled,
+                            userName: userName,
+                            loggedCategoriesToday: loggedCategories
+                        )
+                    }
+                }
+            )) {
+                Text("Meal time banners")
+                    .font(.meBody)
+                    .foregroundStyle(Slate.textPrimary)
+            }
+            .tint(Slate.textPrimary)
+
+            Text("Get native iPhone reminders at 09:00, 13:00 and 19:00. A reminder is skipped when that meal is already logged.")
+                .font(.meCaption)
+                .foregroundStyle(Slate.textSecondary)
+        }
+        .card()
+    }
+
     private var note: some View {
         Text("Targets are estimates that you can adjust to suit your needs. They are not medical advice.")
             .font(.meCaption)
@@ -311,6 +347,7 @@ struct SettingsView: View {
     }
 
     private func loadCurrentSettings() {
+        smartPushRemindersEnabled = NotificationManager.shared.isEnabled
         guard let profile = diary.profile else { return }
         goal = profile.goal.primaryGoal
         activity = profile.activityLevel

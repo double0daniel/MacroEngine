@@ -45,11 +45,13 @@ private struct AppRootView: View {
         .onAppear {
             diary.processRollover()
             diary.refreshFromWidgetData()
+            Task { await refreshNotificationReminders() }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 diary.processRollover()
                 diary.refreshFromWidgetData()
+                Task { await refreshNotificationReminders() }
             }
         }
         .onChange(of: diary.hasCompletedOnboarding) { _, isComplete in
@@ -67,6 +69,15 @@ private struct AppRootView: View {
         .padding(.top, 8)
         .padding(.bottom, 6)
         .background(Slate.background)
+    }
+
+    private func refreshNotificationReminders() async {
+        let userName = UserDefaults.standard.string(forKey: "userName") ?? ""
+        let loggedCategories = Set(diary.todaysEntries.map(\.category))
+        await NotificationManager.shared.refreshIfEnabled(
+            userName: userName,
+            loggedCategoriesToday: loggedCategories
+        )
     }
 
     private func pageButton(_ title: String, symbol: String, index: Int) -> some View {
