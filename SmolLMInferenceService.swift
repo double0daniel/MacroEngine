@@ -130,8 +130,8 @@ private enum SmolLMModelRunner {
 }
 
 /// Small on-device runner for the bundled, fixed-context SmolLM Core ML model.
-/// The model and tokenizer are loaded off the main thread; callers get `nil`
-/// when either asset is unavailable so the rule-based coach can take over.
+/// The model and tokenizer are loaded off the main thread. Calls wait for an
+/// in-progress model load before attempting inference.
 @MainActor
 final class SmolLMInferenceService: ObservableObject {
     static let shared = SmolLMInferenceService()
@@ -150,11 +150,7 @@ final class SmolLMInferenceService: ObservableObject {
     /// Runs greedy autoregressive prediction away from the main thread.
     /// The shipped Core ML graph has a fixed 32-token input and logits output.
     func generateResponse(prompt: String) async -> String? {
-        // Loading is kicked off during singleton initialization. If the first
-        // query arrives before loading finishes, let the deterministic coach
-        // answer it rather than making the user wait for model startup.
-        guard let assets else { return nil }
-        let loadedAssets = assets
+        guard let loadedAssets = await loadAssetsIfNeeded() else { return nil }
 
         let race = SmolLMInferenceRace()
         return await withTaskCancellationHandler {
@@ -288,21 +284,28 @@ private struct SmolLMTokenizer: Sendable {
 
     func encodePrompt(_ prompt: String, maxTokens: Int) -> [Int] {
         guard
-            let questionMarker = prompt.range(of: "User asked: '", options: .caseInsensitive),
-            let ruleMarker = prompt.range(of: "Rule:", options: .caseInsensitive),
-            questionMarker.upperBound <= ruleMarker.lowerBound
+            let questionMarker = prompt.range(of: "User query: '", options: .caseInsensitive),
+            let guidelineMarker = prompt.range(of: "Guideline:", options: .caseInsensitive),
+            questionMarker.upperBound <= guidelineMarker.lowerBound
         else {
             return Array(encode(prompt).suffix(maxTokens))
         }
 
-        let fixedPrefix = encode(String(prompt[..<questionMarker.lowerBound]))
-            + encode(String(prompt[questionMarker.lowerBound..<questionMarker.upperBound]))
-        let questionTokens = encode(String(prompt[questionMarker.upperBound..<ruleMarker.lowerBound]))
-        let ruleTokens = encode(String(prompt[ruleMarker.lowerBound...]))
-        let availableForQuestion = max(0, maxTokens - fixedPrefix.count - ruleTokens.count)
+        let telemetryPrefix = encode(String(prompt[..<questionMarker.lowerBound]))
+        let questionLead = encode(String(prompt[questionMarker.lowerBound..<questionMarker.upperBound]))
+        let questionTokens = encode(String(prompt[questionMarker.upperBound..<guidelineMarker.lowerBound]))
+        let guidelineTokens = Array(encode(String(prompt[guidelineMarker.lowerBound...])).prefix(8))
+
+        // The Core ML graph accepts only 32 input tokens. Keep the tail of the
+        // system/telemetry prefix (which contains the live numbers), then reserve
+        // room for the start of the user's question so quantities like "4 pizzas"
+        // remain visible to the model.
+        let questionBudget = min(12, questionTokens.count)
+        let prefixBudget = max(0, maxTokens - questionLead.count - guidelineTokens.count - questionBudget)
+        let boundedPrefix = Array(telemetryPrefix.suffix(prefixBudget))
+        let availableForQuestion = max(0, maxTokens - boundedPrefix.count - questionLead.count - guidelineTokens.count)
         let boundedQuestion = Array(questionTokens.prefix(availableForQuestion))
-        let tokens = fixedPrefix + boundedQuestion + ruleTokens
-        return tokens.count > maxTokens ? Array(tokens.suffix(maxTokens)) : tokens
+        return Array((boundedPrefix + questionLead + boundedQuestion + guidelineTokens).prefix(maxTokens))
     }
 
     func decode(_ ids: [Int]) -> String {
