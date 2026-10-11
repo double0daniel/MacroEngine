@@ -1,0 +1,56 @@
+name: Build Weekly Pace IPA
+
+on:
+  push:
+    branches: [weekly-pace-trajectory]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Check out weekly pace update
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned iPhone app
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project MacroEngine.xcodeproj \
+            -scheme MacroEngine \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/MacroEngine.app"
+          OUTPUT_PATH="$RUNNER_TEMP/output"
+          PAYLOAD_PATH="$OUTPUT_PATH/Payload"
+          IPA_PATH="$OUTPUT_PATH/MacroEngine-weekly-pace-unsigned.ipa"
+          test -d "$APP_PATH"
+          mkdir -p "$PAYLOAD_PATH"
+          cp -R "$APP_PATH" "$PAYLOAD_PATH/MacroEngine.app"
+          ditto -c -k --sequesterRsrc --keepParent "$PAYLOAD_PATH" "$IPA_PATH"
+          test -f "$IPA_PATH"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacroEngine-weekly-pace-unsigned-IPA
+          path: ${{ runner.temp }}/output/MacroEngine-weekly-pace-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
