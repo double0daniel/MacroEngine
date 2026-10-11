@@ -76,6 +76,11 @@ final class WidgetDataManager: @unchecked Sendable {
         return max(0, snapshot.waterConsumedMl)
     }
 
+    func reset() {
+        defaults.removeObject(forKey: snapshotKey)
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
     @discardableResult
     func addWaterFromWidget(_ amountMl: Int, date: Date = .now) -> Int {
         guard amountMl > 0 else { return waterAmount(for: date) }

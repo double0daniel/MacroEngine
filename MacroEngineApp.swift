@@ -52,6 +52,9 @@ private struct AppRootView: View {
                 diary.refreshFromWidgetData()
             }
         }
+        .onChange(of: diary.hasCompletedOnboarding) { _, isComplete in
+            if !isComplete { selectedPage = 1 }
+        }
     }
 
     private var pageIndicator: some View {

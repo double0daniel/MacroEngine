@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var carbs = "200"
     @State private var fat = "65"
     @State private var showingDashboardLayout = false
+    @State private var showingResetConfirmation = false
     @FocusState private var isFocused: Bool
 
     private var baseProfile: UserProfile {
@@ -58,21 +59,28 @@ struct SettingsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    goalCard
-                    rolloverCard
-                    macroCard
-                    dashboardLayoutCard
-                    note
+                    Text("Settings")
+                        .font(.largeTitle.weight(.bold))
+                        .foregroundStyle(Slate.textPrimary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                    VStack(alignment: .leading, spacing: 16) {
+                        goalCard
+                        rolloverCard
+                        macroCard
+                        dashboardLayoutCard
+                        note
+                        resetDataCard
+                    }
+                    .padding(.horizontal, 20)
                 }
-                .padding(.horizontal, 20)
                 .padding(.top, 12)
                 .padding(.bottom, 28)
             }
             .scrollIndicators(.hidden)
             .scrollDismissesKeyboard(.immediately)
             .slateScreen()
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.large)
+            .toolbar(.hidden, for: .navigationBar)
             .toolbarBackground(Slate.background, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .onAppear(perform: loadCurrentSettings)
@@ -85,6 +93,14 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showingDashboardLayout) {
                 DashboardLayoutEditorView()
+            }
+            .alert("Reset App Data & Onboarding", isPresented: $showingResetConfirmation) {
+                Button("Cancel", role: .cancel) {}
+                Button("Reset Data", role: .destructive) {
+                    diary.resetAppData()
+                }
+            } message: {
+                Text("Are you sure? This will erase all logs, custom meals, and settings, and return to the initial onboarding screen.")
             }
         }
         .preferredColorScheme(.dark)
@@ -255,6 +271,25 @@ struct SettingsView: View {
                 .buttonStyle(.primary)
         }
         .card()
+    }
+
+    private var resetDataCard: some View {
+        Button {
+            showingResetConfirmation = true
+        } label: {
+            Label("Reset App Data & Onboarding", systemImage: "arrow.counterclockwise")
+                .font(.meHeadline)
+                .foregroundStyle(Color.red)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+                .background(Slate.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .strokeBorder(Slate.stroke.opacity(0.6), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Clears app data and restarts onboarding after confirmation")
     }
 
     private func macroField(_ title: String, text: Binding<String>, color: Color) -> some View {

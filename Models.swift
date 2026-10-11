@@ -913,6 +913,36 @@ final class DiaryStore {
         save(customMeals, key: Key.customMeals)
     }
 
+    /// Clears MacroEngine-owned local data and returns the live store to first launch defaults.
+    func resetAppData() {
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("macroengine.") {
+            defaults.removeObject(forKey: key)
+        }
+        defaults.removeObject(forKey: "userName")
+        WidgetDataManager.shared.reset()
+
+        entries = []
+        goals = Macros(calories: 2400, protein: 160, carbs: 260, fat: 75)
+        profile = nil
+        hasCompletedOnboarding = false
+        favoriteFoods = []
+        customMeals = []
+        weightEntries = []
+        workouts = []
+        hydrationEntries = []
+        waterGoalMl = 2000
+        supplementDays = []
+        supplements = SupplementItem.defaults
+        dashboardLayout = DashboardSectionPreference.defaults
+        bodyMeasurements = []
+        trainingReflections = []
+        rolloverEnabled = false
+        maxRolloverCap = 500
+        bankedCalories = 0
+        lastRolloverProcessedDay = nil
+    }
+
     func recordWeight(_ weightKg: Double, date: Date = .now) {
         guard weightKg.isFinite, (20...500).contains(weightKg) else { return }
         let calendar = Calendar.current

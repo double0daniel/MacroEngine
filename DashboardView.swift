@@ -3,13 +3,14 @@ import Charts
 
 struct DashboardView: View {
     @Environment(DiaryStore.self) private var diary
+    @AppStorage("userName") private var userName = ""
     @State private var searchCategory: MealCategory?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    header
+                    coachInsight
                     if diary.dashboardLayout.allSatisfy({ !$0.isEnabled }) {
                         EmptyStateView(
                             symbol: "rectangle.3.group",
@@ -38,24 +39,43 @@ struct DashboardView: View {
         .preferredColorScheme(.dark)
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Today")
-                .font(.system(.largeTitle, weight: .bold))
-                .foregroundStyle(Slate.textPrimary)
-            Text(Date.now, format: .dateTime.weekday(.wide).month(.wide).day())
-                .font(.meBody)
-                .foregroundStyle(Slate.textSecondary)
-            if let profile = diary.profile {
-                Text("\(profile.goal.titleForDashboard) · targets personalised")
-                    .font(.meCaption)
-                    .foregroundStyle(Slate.textTertiary)
-                    .padding(.top, 2)
+    private var coachInsight: some View {
+        HStack(alignment: .center, spacing: 12) {
+            MascotAvatarView(state: mascotState, size: .regular, layout: .badge)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Hey \(greetingName), here's your daily breakdown")
+                    .font(.meHeadline)
+                    .foregroundStyle(Slate.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(Date.now, format: .dateTime.weekday(.wide).month(.wide).day())
+                    .font(.meBody)
+                    .foregroundStyle(Slate.textSecondary)
+                if let profile = diary.profile {
+                    Text("\(profile.goal.titleForDashboard) · targets personalised")
+                        .font(.meCaption)
+                        .foregroundStyle(Slate.textTertiary)
+                }
             }
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .card(padding: 16)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
+    }
+
+    private var greetingName: String {
+        let name = userName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "there" : name
+    }
+
+    private var mascotState: MascotState {
+        let calorieTarget = diary.adjustedDailyCalorieTarget
+        let calorieGoalReached = calorieTarget > 0 && diary.totals.calories >= calorieTarget
+        let proteinGoalReached = diary.goals.protein > 0 && diary.totals.protein >= diary.goals.protein
+        if calorieGoalReached || proteinGoalReached { return .celebrating }
+        if diary.totals.calories > 0 || diary.totals.protein > 0 { return .coaching }
+        return .neutral
     }
 
     private var addButton: some View {

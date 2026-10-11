@@ -14,6 +14,7 @@ targets:
       - path: Assets.xcassets
         buildPhase: resources
       - WidgetDataManager.swift
+      - MascotAvatarView.swift
       - Theme.swift
       - Models.swift
       - Components.swift

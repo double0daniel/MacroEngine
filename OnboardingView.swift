@@ -3,6 +3,7 @@ import UIKit
 
 struct OnboardingView: View {
     @Environment(DiaryStore.self) private var diary
+    @AppStorage("userName") private var userName = ""
 
     @State private var step = 0
     @State private var ageText = "30"
@@ -21,6 +22,9 @@ struct OnboardingView: View {
     private var age: Int? { Int(ageText.trimmingCharacters(in: .whitespacesAndNewlines)) }
     private var heightCm: Double? { parseNumber(heightText) }
     private var weightKg: Double? { parseNumber(weightText) }
+    private var normalizedUserName: String {
+        userName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     private var profileDraft: UserProfile? {
         guard let age, let heightCm, let weightKg,
@@ -45,7 +49,7 @@ struct OnboardingView: View {
         case 0, 3, 4: true
         case 1: age != nil && (18...100).contains(age ?? 0)
         case 2: heightCm.map { (120...230).contains($0) } == true && weightKg.map { (35...350).contains($0) } == true
-        case 5: proteinGrams >= 0 && carbsGrams >= 0 && fatGrams >= 0 && editedCalories > 0
+        case 5: proteinGrams >= 0 && carbsGrams >= 0 && fatGrams >= 0 && editedCalories > 0 && !normalizedUserName.isEmpty
         default: false
         }
     }
@@ -316,6 +320,28 @@ struct OnboardingView: View {
             }
             .card(padding: 18)
 
+            VStack(alignment: .leading, spacing: 12) {
+                Text("What should I call you?")
+                    .font(.meHeadline)
+                    .foregroundStyle(Slate.textPrimary)
+                Text("Your name will appear in your daily coach greeting.")
+                    .font(.meCaption)
+                    .foregroundStyle(Slate.textSecondary)
+                TextField("Your name", text: $userName)
+                    .textContentType(.givenName)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .font(.meBody)
+                    .foregroundStyle(Slate.textPrimary)
+                    .padding(13)
+                    .background(Slate.surfaceRaised, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(Slate.stroke.opacity(0.7), lineWidth: 1)
+                    )
+            }
+            .card(padding: 18)
+
             Text("Starting estimates use the Mifflin–St Jeor equation, an activity multiplier and a goal adjustment. Your actual needs can differ; change targets based on your progress and, where appropriate, professional advice.")
                 .font(.meCaption)
                 .foregroundStyle(Slate.textTertiary)
@@ -341,7 +367,7 @@ struct OnboardingView: View {
                 advance()
             } label: {
                 HStack(spacing: 8) {
-                    Text(step == 5 ? "Start tracking" : step == 0 ? "Get started" : "Continue")
+                    Text(step == 5 ? "Get Started" : step == 0 ? "Get started" : "Continue")
                     Image(systemName: step == 5 ? "arrow.right" : "chevron.right")
                         .font(.system(size: 13, weight: .bold))
                 }
@@ -363,6 +389,7 @@ struct OnboardingView: View {
         }
         if step == 5 {
             guard let profile = profileDraft else { return }
+            userName = normalizedUserName
             diary.finishOnboarding(
                 profile: profile,
                 goals: Macros(calories: editedCalories, protein: proteinGrams, carbs: carbsGrams, fat: fatGrams)
