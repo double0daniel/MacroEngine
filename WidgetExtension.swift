@@ -7,7 +7,7 @@ struct Add250MillilitresIntent: AppIntent {
     static var description = IntentDescription("Add 250 ml to today's MacroEngine water tracker.")
 
     func perform() async throws -> some IntentResult {
-        MacroEngineWidgetDataStore.addWaterFromWidget(250)
+        WidgetDataManager.shared.addWaterFromWidget(250)
         return .result()
     }
 }
@@ -23,11 +23,11 @@ private struct MacroWidgetProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (MacroWidgetEntry) -> Void) {
-        completion(MacroWidgetEntry(date: .now, snapshot: MacroEngineWidgetDataStore.read()))
+        completion(MacroWidgetEntry(date: .now, snapshot: WidgetDataManager.shared.read()))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<MacroWidgetEntry>) -> Void) {
-        let entry = MacroWidgetEntry(date: .now, snapshot: MacroEngineWidgetDataStore.read())
+        let entry = MacroWidgetEntry(date: .now, snapshot: WidgetDataManager.shared.read())
         completion(Timeline(entries: [entry], policy: .after(Calendar.current.date(byAdding: .minute, value: 15, to: .now) ?? .now)))
     }
 }
@@ -72,28 +72,45 @@ private struct MacroProgressWidgetView: View {
     }
 
     private var smallLayout: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(spacing: 5) {
             Text("MACROENGINE")
                 .font(.system(size: 9, weight: .bold, design: .rounded))
                 .tracking(0.7)
                 .foregroundStyle(WidgetSlate.secondary)
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text("\(snapshot.remainingCalories)")
-                    .font(.system(size: 27, weight: .bold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(WidgetSlate.calories)
-                Text("left")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(WidgetSlate.secondary)
+            ZStack {
+                Circle()
+                    .stroke(WidgetSlate.secondary.opacity(0.18), lineWidth: 8)
+                Circle()
+                    .trim(from: 0, to: remainingProgress)
+                    .stroke(WidgetSlate.calories, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                VStack(spacing: 0) {
+                    Text("\(snapshot.remainingCalories)")
+                        .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(WidgetSlate.calories)
+                    Text("kcal left")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(WidgetSlate.secondary)
+                }
             }
-            Text("\(snapshot.caloriesEaten.intValue) / \(snapshot.calorieTarget.intValue) kcal")
-                .font(.system(size: 10, weight: .medium).monospacedDigit())
-                .foregroundStyle(WidgetSlate.secondary)
-            macroBar("P", value: snapshot.proteinEaten, goal: snapshot.proteinGoal, color: WidgetSlate.protein)
-            macroBar("C", value: snapshot.carbsEaten, goal: snapshot.carbsGoal, color: WidgetSlate.carbs)
-            macroBar("F", value: snapshot.fatEaten, goal: snapshot.fatGoal, color: WidgetSlate.fat)
-            Spacer(minLength: 0)
+            .frame(width: 92, height: 92)
+            HStack(spacing: 5) {
+                Image(systemName: "dumbbell.fill")
+                    .foregroundStyle(WidgetSlate.protein)
+                Text("Protein")
+                    .foregroundStyle(WidgetSlate.secondary)
+                Spacer(minLength: 0)
+                Text("\(snapshot.proteinEaten.intValue)/\(snapshot.proteinGoal.intValue)g")
+                    .foregroundStyle(WidgetSlate.text)
+            }
+            .font(.system(size: 10, weight: .semibold).monospacedDigit())
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var remainingProgress: CGFloat {
+        guard snapshot.calorieTarget > 0 else { return 0 }
+        return CGFloat(min(1, max(0, (snapshot.calorieTarget - snapshot.caloriesEaten) / snapshot.calorieTarget)))
     }
 
     private var mediumLayout: some View {
@@ -112,6 +129,9 @@ private struct MacroProgressWidgetView: View {
                 Text("\(snapshot.caloriesEaten.intValue) eaten · \(snapshot.calorieTarget.intValue) target")
                     .font(.system(size: 10, weight: .medium).monospacedDigit())
                     .foregroundStyle(WidgetSlate.secondary)
+                Label("\(snapshot.waterConsumedMl)/\(snapshot.waterGoalMl) ml water", systemImage: "drop.fill")
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(WidgetSlate.protein)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)

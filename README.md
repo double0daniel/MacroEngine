@@ -95,5 +95,5 @@ These settings are intentionally transparent and editable: equations provide sta
 - `FoodLibraryViews.swift`: favourites, custom meal composer and quick logging.
 - `RecipeImporterService.swift`, `RecipeImportPreviewView.swift`: recipe metadata/caption parser, ingredient estimates and editable import preview.
 - `OpenFoodFactsService.swift`, `BarcodeScannerView.swift`: remote food lookup and AVFoundation scanning.
-- `WidgetExtension.swift`, `WidgetData.swift`: WidgetKit timelines, interactive hydration intent and App Group snapshots.
+- `WidgetExtension.swift`, `WidgetData.swift`, `WidgetDataManager.swift`: WidgetKit timelines, interactive hydration intent and App Group snapshots.
 - `MacroEngineApp.swift`: application root and onboarding gate.

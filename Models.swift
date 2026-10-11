@@ -584,7 +584,7 @@ final class DiaryStore {
 
     var waterConsumedTodayMl: Int {
         let localAmount = hydrationEntries.first(where: { Calendar.current.isDateInToday($0.date) })?.amountMl ?? 0
-        let sharedAmount = persist ? MacroEngineWidgetDataStore.waterAmount(for: .now) : 0
+        let sharedAmount = persist ? WidgetDataManager.shared.waterAmount(for: .now) : 0
         return max(localAmount, sharedAmount)
     }
 
@@ -759,7 +759,7 @@ final class DiaryStore {
     func refreshFromWidgetData() {
         guard persist else { return }
         let today = Calendar.current.startOfDay(for: .now)
-        let sharedAmount = MacroEngineWidgetDataStore.waterAmount(for: today)
+        let sharedAmount = WidgetDataManager.shared.waterAmount(for: today)
         if let index = hydrationEntries.firstIndex(where: { Calendar.current.isDateInToday($0.date) }) {
             if sharedAmount > hydrationEntries[index].amountMl {
                 hydrationEntries[index].amountMl = sharedAmount
@@ -951,20 +951,19 @@ final class DiaryStore {
 
     private func syncWidgetData() {
         guard persist else { return }
-        MacroEngineWidgetDataStore.write(MacroWidgetSnapshot(
-            day: Calendar.current.startOfDay(for: .now),
-            caloriesEaten: totals.calories,
+        WidgetDataManager.shared.updateAndReload(
+            calories: totals.calories,
+            protein: totals.protein,
+            carbs: totals.carbs,
+            fat: totals.fat,
+            water: waterConsumedTodayMl,
             calorieTarget: adjustedDailyCalorieTarget,
-            proteinEaten: totals.protein,
-            proteinGoal: goals.protein,
-            carbsEaten: totals.carbs,
-            carbsGoal: goals.carbs,
-            fatEaten: totals.fat,
-            fatGoal: goals.fat,
-            waterConsumedMl: waterConsumedTodayMl,
-            waterGoalMl: waterGoalMl,
+            proteinTarget: goals.protein,
+            carbsTarget: goals.carbs,
+            fatTarget: goals.fat,
+            waterTarget: waterGoalMl,
             foodLogStreak: foodLogStreak
-        ))
+        )
     }
 
     private func load() {

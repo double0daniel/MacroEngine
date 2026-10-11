@@ -13,6 +13,7 @@ targets:
     sources:
       - path: Assets.xcassets
         buildPhase: resources
+      - WidgetDataManager.swift
       - Theme.swift
       - Models.swift
       - Components.swift
@@ -54,6 +55,7 @@ targets:
     sources:
       - WidgetExtension.swift
       - WidgetData.swift
+      - WidgetDataManager.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.double0daniel.MacroEngine.WidgetExtension
