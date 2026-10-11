@@ -182,7 +182,7 @@ struct RecipeImporterService: Sendable {
     private static func servingCount(in text: String) -> Int? {
         let patterns = [#"(?i)\bserves?\s*[:]?\s*(\d{1,2})\b"#, #"(?i)\b(\d{1,2})\s+servings?\b"#]
         for pattern in patterns {
-            if let match = matches(pattern, in: text).first, match.count > 1,
+            if let match = matches(pattern, in: text).first, match.numberOfRanges > 1,
                let value = substring(match, in: text, at: 1),
                let count = Int(value), (1...100).contains(count) { return count }
         }

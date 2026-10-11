@@ -18,7 +18,7 @@ struct RecipeImportPreviewView: View {
     @State private var errorMessage: String?
     @State private var previousServings = 1
     @State private var adjustMacrosWithServings = true
-    @State private var focusedField: ImportField?
+    @FocusState private var focusedField: ImportField?
 
     private enum ImportField: Hashable {
         case servings, calories, protein, carbs, fat

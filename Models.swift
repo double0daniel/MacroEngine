@@ -632,8 +632,8 @@ final class DiaryStore {
     func log(_ meal: CustomMeal, category: MealCategory, date: Date = .now) {
         for ingredient in meal.ingredients {
             guard ingredient.grams.isFinite, ingredient.grams > 0 else { continue }
-            entries.append(DiaryEntry(food: ingredient.food, grams: ingredient.grams, category: category,
-                                      date: date, customMealID: meal.id, customMealName: meal.name))
+            entries.append(DiaryEntry(food: ingredient.food, grams: ingredient.grams, date: date,
+                                      category: category, customMealID: meal.id, customMealName: meal.name))
         }
         save(entries, key: Key.entries)
         syncWidgetData()
@@ -980,7 +980,7 @@ final class DiaryStore {
         waterGoalMl = UserDefaults.standard.object(forKey: Key.waterGoal) as? Int ?? waterGoalMl
         supplementDays = decode([SupplementDay].self, key: Key.supplementDays) ?? []
         supplements = decode([SupplementItem].self, key: Key.supplementItems) ?? SupplementItem.defaults
-        dashboardLayout = decode([DashboardSectionPreference].self, key: Key.dashboardLayout) ?? .defaults
+        dashboardLayout = decode([DashboardSectionPreference].self, key: Key.dashboardLayout) ?? DashboardSectionPreference.defaults
         bodyMeasurements = decode([BodyMeasurementEntry].self, key: Key.bodyMeasurements) ?? []
         trainingReflections = decode([TrainingReflectionEntry].self, key: Key.trainingReflections) ?? []
         rolloverEnabled = UserDefaults.standard.object(forKey: Key.rolloverEnabled) as? Bool ?? false
