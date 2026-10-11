@@ -1,11 +1,7 @@
 import Foundation
 
 /// Generates Macro's replies with the bundled on-device SmolLM model.
-/// Telemetry is calculated locally and included in every prompt; no user query
-/// or personal data is sent to a server.
 enum LocalAIEngine {
-    private static let inferenceFailureMessage = "I couldn't generate a response just now. Please try again."
-
     static func generateInsight(
         for query: String,
         userName: String,
@@ -20,23 +16,8 @@ enum LocalAIEngine {
         let remainingCalories = remainingCals
         let proteinRemainingGrams = remainingProtein
         let foodFits = remainingCalories >= 400
-
-        // Keep the full app context available in the task, while the model prompt
-        // uses the requested concise structure and live calorie/protein values.
-        _ = (userName, remainingCarbs, remainingFat, goal, waterMl)
-        let prompt = "System: You are MacroEngine's UK fitness mascot. Telemetry: \(remainingCalories) kcal remaining, \(proteinRemainingGrams)g protein remaining. User query: '\(query)'. Guideline: \(foodFits ? "This food fits within the budget." : "This food exceeds the calorie budget."). Deliver a direct, unique, conversational response."
-
-        guard let generated = await SmolLMInferenceService.shared.generateResponse(prompt: prompt) else {
-            return inferenceFailureMessage
-        }
-
-        let response = generated.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard response.count >= 2,
-              response.count <= 600,
-              !response.localizedCaseInsensitiveContains("user query:") else {
-            return inferenceFailureMessage
-        }
-        return response
+        let prompt = "Mascot. Rem: \(remainingCalories)kcal, \(proteinRemainingGrams)g protein. Fit: \(foodFits ? "Yes" : "No"). Query: '\(query)'. Short answer:"
+        return await SmolLMInferenceService.shared.generateResponse(prompt: prompt)
     }
 
     /// Keeps the dashboard's mascot celebration cue independent of response generation.

@@ -69,16 +69,15 @@ private final class SmolLMInferenceRace: @unchecked Sendable {
 private enum SmolLMModelRunner {
     static func generate(prompt: String, model: MLModel, tokenizer: SmolLMTokenizer) throws -> String? {
         let contextLimit = 32
-        var inputTokens = tokenizer.encodePrompt(prompt, maxTokens: contextLimit)
+        let inputTokens = tokenizer.encodePrompt(prompt, maxTokens: contextLimit)
         guard !inputTokens.isEmpty else { return nil }
-        if inputTokens.count > contextLimit {
-            inputTokens = Array(inputTokens.suffix(contextLimit))
-        }
+        let boundedInputTokens = Array(inputTokens.suffix(contextLimit))
 
         var generated: [Int] = []
         for _ in 0..<24 {
             guard !Task.isCancelled else { return nil }
-            let context = Array((inputTokens + generated).suffix(contextLimit))
+            let context = Array((boundedInputTokens + generated).suffix(contextLimit))
+            let paddedTokens = context + Array(repeating: 0, count: contextLimit - context.count)
             let ids = try MLMultiArray(
                 shape: [NSNumber(value: 1), NSNumber(value: contextLimit)],
                 dataType: .int32
@@ -88,10 +87,10 @@ private enum SmolLMModelRunner {
                 dataType: .int32
             )
 
-            for (index, token) in context.enumerated() {
+            for (index, token) in paddedTokens.enumerated() {
                 let position = [NSNumber(value: 0), NSNumber(value: index)]
                 ids[position] = NSNumber(value: token)
-                mask[position] = 1
+                mask[position] = index < context.count ? 1 : 0
             }
 
             let provider = try MLDictionaryFeatureProvider(dictionary: [
@@ -109,7 +108,7 @@ private enum SmolLMModelRunner {
         }
 
         let answer = tokenizer.decode(generated).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard answer.count >= 12, answer.count <= 600 else { return nil }
+        guard !answer.isEmpty, answer.count <= 600 else { return nil }
         return answer
     }
 
@@ -149,20 +148,25 @@ final class SmolLMInferenceService: ObservableObject {
 
     /// Runs greedy autoregressive prediction away from the main thread.
     /// The shipped Core ML graph has a fixed 32-token input and logits output.
-    func generateResponse(prompt: String) async -> String? {
-        guard let loadedAssets = await loadAssetsIfNeeded() else { return nil }
+    func generateResponse(prompt: String) async -> String {
+        let fallback = telemetryFallback(from: prompt)
+        guard let loadedAssets = await loadAssetsIfNeeded() else { return fallback }
 
         let race = SmolLMInferenceRace()
-        return await withTaskCancellationHandler {
+        let result = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 race.install(continuation)
                 let inferenceTask = Task.detached(priority: .userInitiated) {
-                    let response = try? SmolLMModelRunner.generate(
-                        prompt: prompt,
-                        model: loadedAssets.model,
-                        tokenizer: loadedAssets.tokenizer
-                    )
-                    race.finish(response ?? nil)
+                    do {
+                        let response = try SmolLMModelRunner.generate(
+                            prompt: prompt,
+                            model: loadedAssets.model,
+                            tokenizer: loadedAssets.tokenizer
+                        )
+                        race.finish(response)
+                    } catch {
+                        race.finish(nil)
+                    }
                 }
                 race.install(inferenceTask)
             }
@@ -171,6 +175,26 @@ final class SmolLMInferenceService: ObservableObject {
             // any currently executing Core ML prediction pass completes.
             race.cancel()
         }
+        let response = result?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return response.isEmpty ? fallback : response
+    }
+
+    private func telemetryFallback(from prompt: String) -> String {
+        let pattern = #"Rem:\s*(-?\d+)\s*kcal,\s*(-?\d+)g\s+protein"#
+        guard
+            let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+            let match = expression.firstMatch(in: prompt, range: NSRange(prompt.startIndex..<prompt.endIndex, in: prompt)),
+            let caloriesRange = Range(match.range(at: 1), in: prompt),
+            let proteinRange = Range(match.range(at: 2), in: prompt),
+            let calories = Int(prompt[caloriesRange]),
+            let protein = Int(prompt[proteinRange])
+        else {
+            return "I couldn't generate a reply right now. Please try again."
+        }
+
+        let calorieStatus = calories < 0 ? "\(abs(calories)) kcal over" : "\(calories) kcal left"
+        let proteinStatus = protein < 0 ? "\(abs(protein)) g over your protein target" : "\(protein) g protein left"
+        return "You've got \(calorieStatus) and \(proteinStatus) today. Use that to guide your next meal."
     }
 
     private func loadAssetsIfNeeded() async -> SmolLMLoadedAssets? {
@@ -284,28 +308,26 @@ private struct SmolLMTokenizer: Sendable {
 
     func encodePrompt(_ prompt: String, maxTokens: Int) -> [Int] {
         guard
-            let questionMarker = prompt.range(of: "User query: '", options: .caseInsensitive),
-            let guidelineMarker = prompt.range(of: "Guideline:", options: .caseInsensitive),
-            questionMarker.upperBound <= guidelineMarker.lowerBound
+            let queryMarker = prompt.range(of: "Query: '", options: .caseInsensitive),
+            let answerMarker = prompt.range(of: "Short answer:", options: .caseInsensitive),
+            queryMarker.upperBound <= answerMarker.lowerBound
         else {
             return Array(encode(prompt).suffix(maxTokens))
         }
 
-        let telemetryPrefix = encode(String(prompt[..<questionMarker.lowerBound]))
-        let questionLead = encode(String(prompt[questionMarker.lowerBound..<questionMarker.upperBound]))
-        let questionTokens = encode(String(prompt[questionMarker.upperBound..<guidelineMarker.lowerBound]))
-        let guidelineTokens = Array(encode(String(prompt[guidelineMarker.lowerBound...])).prefix(8))
+        let telemetryPrefix = encode(String(prompt[..<queryMarker.lowerBound]))
+        let queryLead = encode(String(prompt[queryMarker.lowerBound..<queryMarker.upperBound]))
+        let queryTokens = encode(String(prompt[queryMarker.upperBound..<answerMarker.lowerBound]))
+        let answerLead = encode(String(prompt[answerMarker.lowerBound...]))
 
-        // The Core ML graph accepts only 32 input tokens. Keep the tail of the
-        // system/telemetry prefix (which contains the live numbers), then reserve
-        // room for the start of the user's question so quantities like "4 pizzas"
-        // remain visible to the model.
-        let questionBudget = min(12, questionTokens.count)
-        let prefixBudget = max(0, maxTokens - questionLead.count - guidelineTokens.count - questionBudget)
+        // Keep the live telemetry at the end of the prefix and reserve space for
+        // the user's query and answer cue in the model's fixed 32-token context.
+        let queryBudget = min(16, queryTokens.count)
+        let prefixBudget = max(0, maxTokens - queryLead.count - answerLead.count - queryBudget)
         let boundedPrefix = Array(telemetryPrefix.suffix(prefixBudget))
-        let availableForQuestion = max(0, maxTokens - boundedPrefix.count - questionLead.count - guidelineTokens.count)
-        let boundedQuestion = Array(questionTokens.prefix(availableForQuestion))
-        return Array((boundedPrefix + questionLead + boundedQuestion + guidelineTokens).prefix(maxTokens))
+        let availableForQuery = max(0, maxTokens - boundedPrefix.count - queryLead.count - answerLead.count)
+        let boundedQuery = Array(queryTokens.prefix(availableForQuery))
+        return Array((boundedPrefix + queryLead + boundedQuery + answerLead).prefix(maxTokens))
     }
 
     func decode(_ ids: [Int]) -> String {
