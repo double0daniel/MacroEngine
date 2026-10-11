@@ -8,6 +8,7 @@ struct DashboardView: View {
     @State private var searchCategory: MealCategory?
     @State private var userQuery: String = ""
     @State private var mascotResponse: String? = nil
+    @State private var isGeneratingAI = false
     @State private var askMascotState: MascotState = .neutral
     @State private var activeAIQuery: UUID?
     @FocusState private var isInputFocused: Bool
@@ -142,7 +143,20 @@ struct DashboardView: View {
             }
             .scrollIndicators(.hidden)
 
-            if let mascotResponse {
+            if isGeneratingAI {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .tint(Slate.textSecondary)
+                    Text("Macro is thinking…")
+                        .font(.meBody)
+                        .foregroundStyle(Slate.textSecondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Slate.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .transition(.move(edge: .top).combined(with: .opacity))
+            } else if let mascotResponse {
                 HStack(alignment: .top, spacing: 10) {
                     Text(mascotResponse)
                         .font(.meBody)
@@ -153,6 +167,7 @@ struct DashboardView: View {
                     Button {
                         withAnimation(.easeInOut(duration: 0.25)) {
                             activeAIQuery = nil
+                            isGeneratingAI = false
                             self.mascotResponse = nil
                             askMascotState = .neutral
                         }
@@ -199,6 +214,8 @@ struct DashboardView: View {
 
         withAnimation(.easeInOut(duration: 0.25)) {
             askMascotState = .coaching
+            mascotResponse = nil
+            isGeneratingAI = true
         }
         isInputFocused = false
 
@@ -214,20 +231,6 @@ struct DashboardView: View {
             remainingCals: remainingCalories,
             remainingProtein: remainingProtein
         )
-        let fallbackAnswer = LocalAIEngine.deterministicInsight(
-            for: query,
-            userName: userName,
-            remainingCals: remainingCalories,
-            remainingProtein: remainingProtein,
-            remainingCarbs: remainingCarbs,
-            remainingFat: remainingFat,
-            goal: goal,
-            waterMl: diary.waterConsumedTodayMl
-        )
-        withAnimation(.easeInOut(duration: 0.25)) {
-            mascotResponse = fallbackAnswer
-        }
-
         Task { @MainActor in
             await Task.yield()
             guard activeAIQuery == queryID else { return }
@@ -242,6 +245,7 @@ struct DashboardView: View {
                 waterMl: diary.waterConsumedTodayMl
             )
             withAnimation(.easeInOut(duration: 0.25)) {
+                isGeneratingAI = false
                 mascotResponse = answer
                 askMascotState = shouldCelebrate ? .celebrating : .coaching
             }
