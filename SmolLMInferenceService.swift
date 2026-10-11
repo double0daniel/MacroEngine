@@ -117,19 +117,24 @@ private enum SmolLMModelRunner {
             prompt,
             maxTokens: maximumContextTokens - maximumGenerationTokens
         )
+        print("Input Tokens Count: \(inputTokens.count)")
+        var generatedTokens: [Int] = []
+        defer { print("Generated Token IDs: \(generatedTokens)") }
         guard !inputTokens.isEmpty else { return nil }
 
         // Each request gets a fresh KV cache so prior questions cannot affect it.
         let state = model.makeState()
         var nextInputTokens = inputTokens
         var pastTokenCount = 0
-        var generated: [Int] = []
         let generationStart = ProcessInfo.processInfo.systemUptime
         for _ in 0..<maximumGenerationTokens {
             guard !Task.isCancelled else { return nil }
             guard ProcessInfo.processInfo.systemUptime - generationStart < maximumGenerationDuration else { break }
             guard pastTokenCount + nextInputTokens.count <= maximumContextTokens else { break }
             let ids = try tokenArray(nextInputTokens)
+            guard ids.shape.count == 2,
+                  ids.shape[0].intValue == 1,
+                  ids.shape[1].intValue == nextInputTokens.count else { return nil }
             let mask = try causalMask(
                 pastTokenCount: pastTokenCount,
                 inputTokenCount: nextInputTokens.count
@@ -151,27 +156,33 @@ private enum SmolLMModelRunner {
             guard let logits = output.featureValue(for: "logits")?.multiArrayValue else { return nil }
 
             let position = nextInputTokens.count - 1
+            guard logits.shape.count == 3,
+                  logits.shape[0].intValue == 1,
+                  logits.shape[1].intValue > position,
+                  logits.shape[2].intValue > 0 else { return nil }
             let nextToken = greedyToken(logits, position: position)
             if nextToken == 151_645 || nextToken == 151_643
                 || nextToken == tokenizer.endOfTextID || nextToken == tokenizer.endOfTurnID { break }
-            generated.append(nextToken)
+            generatedTokens.append(nextToken)
 
-            if generated.count >= 5, endsFirstSentence(tokenizer.decode(generated)) { break }
+            if generatedTokens.count >= 5, endsFirstSentence(tokenizer.decode(generatedTokens)) { break }
             pastTokenCount += nextInputTokens.count
             nextInputTokens = [nextToken]
         }
 
-        guard generated.count >= 3 else {
-            return QwenGeneratedResponse(text: "", tokenCount: generated.count)
+        guard !generatedTokens.isEmpty else {
+            return QwenGeneratedResponse(text: "", tokenCount: 0)
         }
-        let answer = firstSentence(tokenizer.decode(generated))
-        guard !answer.isEmpty, answer.count <= 600 else {
-            return QwenGeneratedResponse(text: "", tokenCount: generated.count)
+        let answer = firstSentence(tokenizer.decode(generatedTokens))
+        guard !answer.isEmpty else {
+            return QwenGeneratedResponse(text: "", tokenCount: generatedTokens.count)
         }
-        return QwenGeneratedResponse(text: answer, tokenCount: generated.count)
+        return QwenGeneratedResponse(text: answer, tokenCount: generatedTokens.count)
     }
 
     private static func tokenArray(_ tokens: [Int]) throws -> MLMultiArray {
+        // Qwen's prefill uses a batch-one [batch, sequence] input tensor.
+        precondition(!tokens.isEmpty, "Qwen input token sequence cannot be empty")
         let array = try MLMultiArray(
             shape: [NSNumber(value: 1), NSNumber(value: tokens.count)],
             dataType: .int32
@@ -258,10 +269,6 @@ final class SmolLMInferenceService: ObservableObject {
         remainingProtein: Int,
         userQuery: String
     ) async -> String {
-        let fallback = telemetryFallback(
-            remainingCalories: remainingCalories,
-            remainingProtein: remainingProtein
-        )
         let race = SmolLMInferenceRace()
         let result: QwenGeneratedResponse? = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
@@ -296,28 +303,38 @@ final class SmolLMInferenceService: ObservableObject {
             // any currently executing Core ML prediction pass completes.
             race.cancel()
         }
-        guard let result else { return fallback }
+        guard let result else {
+            return queryAwareFallback(
+                for: userQuery,
+                remainingCalories: remainingCalories,
+                remainingProtein: remainingProtein
+            )
+        }
         let response = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard result.tokenCount >= 3, !response.isEmpty else {
+        guard result.tokenCount > 0, !response.isEmpty else {
             print("Qwen produced empty generation")
-            return queryAwareFallback(for: userQuery)
+            return queryAwareFallback(
+                for: userQuery,
+                remainingCalories: remainingCalories,
+                remainingProtein: remainingProtein
+            )
         }
         return response
     }
 
-    private func telemetryFallback(remainingCalories: Int, remainingProtein: Int) -> String {
-        let calories = remainingCalories > 0 ? "\(remainingCalories) kcal" : "calories"
-        let protein = remainingProtein > 0 ? "\(remainingProtein)g protein" : "protein"
-        return "You have \(calories) and \(protein) left today. Start with a protein-rich meal like chicken breast, eggs, or Greek yogurt!"
-    }
-
-    private func queryAwareFallback(for userQuery: String) -> String {
-        let query = userQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else {
-            return "Let's keep it simple: choose chicken, eggs, or Greek yogurt for a protein-rich option today."
+    private func queryAwareFallback(
+        for userQuery: String,
+        remainingCalories: Int,
+        remainingProtein: Int
+    ) -> String {
+        let query = userQuery.lowercased()
+        if ["pizza", "burger", "fast food", "junk"].contains(where: { query.contains($0) }) {
+            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left. Pizza fits if you keep it under your calorie budget and pair it with a protein side!"
         }
-        let shortQuery = String(query.prefix(72)).trimmingCharacters(in: .whitespacesAndNewlines)
-        return "For ‘\(shortQuery)’, try a protein-rich option like chicken, eggs, or Greek yogurt."
+        if ["snack", "protein", "food"].contains(where: { query.contains($0) }) {
+            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left. Try 200g Greek yogurt, a whey shake, or 3 boiled eggs for a quick protein hit."
+        }
+        return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left. Prioritize lean protein to hit your daily target!"
     }
 
     private func loadAssetsIfNeeded() async -> SmolLMLoadedAssets? {

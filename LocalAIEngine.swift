@@ -14,11 +14,12 @@ enum LocalAIEngine {
     ) async -> String {
         let remainingCalories = remainingCals
         let proteinRemainingGrams = remainingProtein
+        let userQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let prompt = """
         <|im_start|>system
         You are MacroEngine's UK fitness coach. Give ONE concise sentence (max 15 words) recommending a high-protein snack or meal.<|im_end|>
         <|im_start|>user
-        Query: \(query)
+        Query: \(userQuery)
         Remaining: \(remainingCalories) kcal, \(proteinRemainingGrams)g protein.<|im_end|>
         <|im_start|>assistant
         """
@@ -26,7 +27,7 @@ enum LocalAIEngine {
             prompt: prompt,
             remainingCalories: remainingCalories,
             remainingProtein: proteinRemainingGrams,
-            userQuery: query
+            userQuery: userQuery
         )
     }
 
