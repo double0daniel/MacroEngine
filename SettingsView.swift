@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var protein = "140"
     @State private var carbs = "200"
     @State private var fat = "65"
+    @State private var showingDashboardLayout = false
     @FocusState private var isFocused: Bool
 
     private var baseProfile: UserProfile {
@@ -58,7 +59,9 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     goalCard
+                    rolloverCard
                     macroCard
+                    dashboardLayoutCard
                     note
                 }
                 .padding(.horizontal, 20)
@@ -79,6 +82,9 @@ struct SettingsView: View {
                     Button("Done") { isFocused = false }
                         .foregroundStyle(Slate.textPrimary)
                 }
+            }
+            .sheet(isPresented: $showingDashboardLayout) {
+                DashboardLayoutEditorView()
             }
         }
         .preferredColorScheme(.dark)
@@ -185,11 +191,70 @@ struct SettingsView: View {
         .card()
     }
 
+    private var rolloverCard: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            Label("Rollover Calorie Settings", systemImage: "arrow.left.arrow.right")
+                .font(.meHeadline)
+                .foregroundStyle(Slate.textPrimary)
+            Toggle(isOn: Binding(
+                get: { diary.rolloverEnabled },
+                set: { diary.setRolloverEnabled($0) }
+            )) {
+                Text("Track unused calories")
+                    .font(.meBody)
+                    .foregroundStyle(Slate.textPrimary)
+            }
+            .tint(Slate.textPrimary)
+
+            Text("Unused calories from logged days add to your bank. Eating above your base target uses the bank. The weekly bank balance is capped at your limit.")
+                .font(.meCaption)
+                .foregroundStyle(Slate.textSecondary)
+
+            if diary.rolloverEnabled {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Banked calories")
+                            .font(.meCaption)
+                            .foregroundStyle(Slate.textSecondary)
+                        Text("\(diary.bankedCalories) kcal available")
+                            .font(.meNumber)
+                            .foregroundStyle(Slate.textPrimary)
+                    }
+                    Spacer()
+                    Stepper(value: Binding(
+                        get: { diary.maxRolloverCap },
+                        set: { diary.setMaxRolloverCap($0) }
+                    ), in: 100...2_000, step: 50) {
+                        Text("Weekly bank cap: \(diary.maxRolloverCap) kcal")
+                            .font(.meCaption.monospacedDigit())
+                            .foregroundStyle(Slate.textPrimary)
+                    }
+                    .fixedSize()
+                }
+            }
+        }
+        .card()
+    }
+
     private var note: some View {
         Text("Targets are estimates that you can adjust to suit your needs. They are not medical advice.")
             .font(.meCaption)
             .foregroundStyle(Slate.textTertiary)
             .padding(.horizontal, 4)
+    }
+
+    private var dashboardLayoutCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Dashboard layout", systemImage: "rectangle.3.group")
+                .font(.meHeadline)
+                .foregroundStyle(Slate.textPrimary)
+            Text("Choose which cards appear and drag to change their order.")
+                .font(.meCaption)
+                .foregroundStyle(Slate.textSecondary)
+            Button("Edit Dashboard Layout") { showingDashboardLayout = true }
+                .buttonStyle(.primary)
+        }
+        .card()
     }
 
     private func macroField(_ title: String, text: Binding<String>, color: Color) -> some View {
@@ -226,6 +291,45 @@ struct SettingsView: View {
         carbs = String(values.carbs.whole)
         fat = String(values.fat.whole)
         diary.updateProfileAndGoals(draftProfile, goals: values)
+    }
+}
+
+private struct DashboardLayoutEditorView: View {
+    @Environment(DiaryStore.self) private var diary
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(diary.dashboardLayout) { preference in
+                    Toggle(isOn: Binding(
+                        get: { preference.isEnabled },
+                        set: { diary.setDashboardSection(preference.section, enabled: $0) }
+                    )) {
+                        Text(preference.section.title)
+                            .font(.meBody)
+                            .foregroundStyle(Slate.textPrimary)
+                    }
+                    .tint(Slate.textPrimary)
+                    .listRowBackground(Slate.surface)
+                }
+                .onMove(perform: diary.moveDashboardSections)
+            }
+            .scrollContentBackground(.hidden)
+            .background(Slate.background)
+            .navigationTitle("Dashboard Layout")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Slate.background, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(Slate.textPrimary)
+                }
+                ToolbarItem(placement: .primaryAction) { EditButton() }
+            }
+        }
+        .preferredColorScheme(.dark)
     }
 }
 

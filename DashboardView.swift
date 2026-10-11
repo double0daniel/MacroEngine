@@ -10,19 +10,18 @@ struct DashboardView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     header
-                    CalorieSummaryCard(eaten: diary.totals.calories, burned: diary.caloriesBurnedToday,
-                                       goal: diary.goals.calories)
-                    MacroSegmentSummaryCard(totals: diary.totals, goals: diary.goals)
-                    MacroBreakdownCard(totals: diary.totals, goals: diary.goals)
-                    WorkoutJournalCard()
-                    WaterTrackerCard()
-                    SupplementTrackerCard()
-                    DiarySection(
-                        entries: diary.todaysEntries,
-                        onDelete: { diary.remove($0) },
-                        onAdd: { searchCategory = $0 }
-                    )
-                    WeightTelemetryCard()
+                    if diary.dashboardLayout.allSatisfy({ !$0.isEnabled }) {
+                        EmptyStateView(
+                            symbol: "rectangle.3.group",
+                            title: "No dashboard cards enabled",
+                            message: "Choose the cards you want to see in Settings."
+                        )
+                        .card(padding: 8)
+                    } else {
+                        ForEach(diary.dashboardLayout.filter(\.isEnabled)) { preference in
+                            dashboardSection(preference.section)
+                        }
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
@@ -78,10 +77,70 @@ struct DashboardView: View {
             .ignoresSafeArea()
         }
     }
+
+    @ViewBuilder
+    private func dashboardSection(_ section: DashboardSection) -> some View {
+        switch section {
+        case .calorieSummary:
+            CalorieSummaryCard(eaten: diary.totals.calories, burned: diary.caloriesBurnedToday,
+                               goal: diary.adjustedDailyCalorieTarget,
+                               baseTarget: diary.goals.calories,
+                               rolloverAdjustment: diary.rolloverAdjustment)
+        case .macroRings:
+            MacroSegmentSummaryCard(totals: diary.totals, goals: diary.goals)
+        case .macroBreakdown:
+            MacroBreakdownCard(totals: diary.totals, goals: diary.goals)
+        case .mealLogs:
+            DiarySection(
+                entries: diary.todaysEntries,
+                onDelete: { diary.remove($0) },
+                onAdd: { searchCategory = $0 }
+            )
+        case .waterTracker:
+            WaterTrackerCard()
+        case .supplementTracker:
+            SupplementTrackerCard()
+        case .workoutJournal:
+            WorkoutJournalCard()
+        }
+    }
 }
 
 private extension GoalApproach {
     var titleForDashboard: String { title }
+}
+
+struct TelemetryView: View {
+    @Environment(DiaryStore.self) private var diary
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Telemetry")
+                            .font(.system(.largeTitle, weight: .bold))
+                            .foregroundStyle(Slate.textPrimary)
+                        Text("Progress trends and training reflections")
+                            .font(.meBody)
+                            .foregroundStyle(Slate.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    WeightTelemetryCard()
+                    BodyMeasurementsCard()
+                    TrainingJournalCard()
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 24)
+            }
+            .scrollIndicators(.hidden)
+            .scrollDismissesKeyboard(.immediately)
+            .slateScreen()
+            .toolbar(.hidden, for: .navigationBar)
+        }
+        .preferredColorScheme(.dark)
+    }
 }
 
 // MARK: - Calorie hero
@@ -90,6 +149,8 @@ struct CalorieSummaryCard: View {
     let eaten: Double
     var burned: Int = 0
     let goal: Double
+    var baseTarget: Double? = nil
+    var rolloverAdjustment: Int = 0
 
     private var net: Double { eaten - Double(max(0, burned)) }
     private var remaining: Double { goal - net }
@@ -114,14 +175,21 @@ struct CalorieSummaryCard: View {
                 Rectangle().fill(Slate.stroke).frame(width: 1, height: 32)
                 stat(title: "Burned", value: max(0, burned), symbol: "figure.run", tinted: false)
                 Rectangle().fill(Slate.stroke).frame(width: 1, height: 32)
-                stat(title: "Goal", value: goal.whole, symbol: "target", tinted: false)
+                stat(title: "Adjusted", value: goal.whole, symbol: "target", tinted: false)
+            }
+
+            HStack(alignment: .top, spacing: 8) {
+                targetDetail(title: "Base Target", value: "\((baseTarget ?? goal).whole) kcal", color: Slate.textSecondary)
+                targetDetail(title: "Rollover Adjustment", value: "\(rolloverAdjustment >= 0 ? "+" : "")\(rolloverAdjustment) kcal",
+                             color: rolloverAdjustment > 0 ? Accent.fat : Slate.textSecondary)
+                targetDetail(title: "Adjusted Net Target", value: "\(goal.whole) kcal", color: Slate.textPrimary)
             }
         }
         .frame(maxWidth: .infinity)
         .card(padding: 24)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Calories")
-        .accessibilityValue("\(eaten.whole) eaten, \(max(0, burned)) burned, net \(net.whole) of \(goal.whole). \(abs(remaining).whole) \(remaining >= 0 ? "left" : "over").")
+        .accessibilityValue("\(eaten.whole) eaten, \(max(0, burned)) burned, base target \((baseTarget ?? goal).whole), rollover adjustment \(rolloverAdjustment), adjusted net target \(goal.whole). \(abs(remaining).whole) \(remaining >= 0 ? "left" : "over").")
     }
 
     private func stat(title: String, value: Int, symbol: String, tinted: Bool) -> some View {
@@ -137,6 +205,21 @@ struct CalorieSummaryCard: View {
             Text("\(value)")
                 .font(.meNumber)
                 .foregroundStyle(Slate.textPrimary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func targetDetail(title: String, value: String, color: Color) -> some View {
+        VStack(spacing: 4) {
+            Text(title)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Slate.textTertiary)
+                .multilineTextAlignment(.center)
+            Text(value)
+                .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity)
     }
@@ -257,6 +340,8 @@ struct MacroProgressRow: View {
 // MARK: - Meal diary grouped by category
 
 struct DiarySection: View {
+    @Environment(DiaryStore.self) private var diary
+    @State private var entryToRate: DiaryEntry?
     let entries: [DiaryEntry]
     let onDelete: (DiaryEntry) -> Void
     let onAdd: (MealCategory) -> Void
@@ -273,6 +358,11 @@ struct DiarySection: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .sheet(item: $entryToRate) { entry in
+            SatietyRatingEditor(entry: entry) { rating in
+                diary.updateSatietyRating(rating, for: entry)
+            }
+        }
     }
 
     private func mealCard(_ category: MealCategory) -> some View {
@@ -310,7 +400,9 @@ struct DiarySection: View {
             if !categoryEntries.isEmpty {
                 Divider().overlay(Slate.stroke)
                 ForEach(categoryEntries) { entry in
-                    DiaryEntryRow(entry: entry)
+                    DiaryEntryRow(entry: entry) {
+                        entryToRate = entry
+                    }
                         .contextMenu {
                             Button(role: .destructive) { onDelete(entry) } label: {
                                 Label("Remove entry", systemImage: "trash")
@@ -336,33 +428,128 @@ struct DiarySection: View {
 
 struct DiaryEntryRow: View {
     let entry: DiaryEntry
+    let onRate: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(entry.food.name)
-                    .font(.meHeadline)
-                    .foregroundStyle(Slate.textPrimary)
-                    .lineLimit(1)
-                Text("\(entry.grams.whole) g" + (entry.food.brand.map { " · \($0)" } ?? ""))
-                    .font(.meBody)
-                    .foregroundStyle(Slate.textSecondary)
-                    .lineLimit(1)
-                MacroChips(macros: entry.macros)
-                    .padding(.top, 2)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(entry.food.name)
+                        .font(.meHeadline)
+                        .foregroundStyle(Slate.textPrimary)
+                        .lineLimit(1)
+                    Text("\(entry.grams.whole) g" + (entry.food.brand.map { " · \($0)" } ?? ""))
+                        .font(.meBody)
+                        .foregroundStyle(Slate.textSecondary)
+                        .lineLimit(1)
+                    MacroChips(macros: entry.macros)
+                        .padding(.top, 2)
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("\(entry.macros.calories.whole)")
+                        .font(.meNumber)
+                        .foregroundStyle(Slate.textPrimary)
+                    Text("kcal")
+                        .font(.meCaption)
+                        .foregroundStyle(Slate.textTertiary)
+                }
             }
-            Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("\(entry.macros.calories.whole)")
-                    .font(.meNumber)
-                    .foregroundStyle(Slate.textPrimary)
-                Text("kcal")
-                    .font(.meCaption)
-                    .foregroundStyle(Slate.textTertiary)
+            Button(action: onRate) {
+                Label {
+                    if let rating = entry.satietyRating {
+                        Text("Satiety \(rating.satietyScore)/5 · Energy \(rating.energyScore)/5")
+                    } else {
+                        Text("Rate satiety & energy")
+                    }
+                } icon: {
+                    Image(systemName: "heart.text.square.fill")
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(entry.satietyRating == nil ? Slate.textSecondary : Slate.textPrimary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Slate.surfaceRaised, in: Capsule())
             }
+            .buttonStyle(.plain)
         }
         .padding(16)
-        .contentShape(Rectangle())
+    }
+}
+
+struct SatietyRatingEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    let entry: DiaryEntry
+    let onSave: (SatietyRating?) -> Void
+    @State private var satietyScore: Int
+    @State private var energyScore: Int
+
+    init(entry: DiaryEntry, onSave: @escaping (SatietyRating?) -> Void) {
+        self.entry = entry
+        self.onSave = onSave
+        _satietyScore = State(initialValue: entry.satietyRating?.satietyScore ?? 3)
+        _energyScore = State(initialValue: entry.satietyRating?.energyScore ?? 3)
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 22) {
+                Text(entry.customMealName ?? entry.food.name)
+                    .font(.meHeadline)
+                    .foregroundStyle(Slate.textPrimary)
+                ratingControl(title: "Satiety", detail: "1 Hungry · 5 Very Full", score: $satietyScore)
+                ratingControl(title: "Energy", detail: "1 Sluggish · 5 High Energy", score: $energyScore)
+                Button("Save Rating") {
+                    onSave(SatietyRating(satietyScore: satietyScore, energyScore: energyScore))
+                    dismiss()
+                }
+                .buttonStyle(.primary)
+                if entry.satietyRating != nil {
+                    Button("Remove Rating", role: .destructive) {
+                        onSave(nil)
+                        dismiss()
+                    }
+                    .font(.meBody.weight(.semibold))
+                    .foregroundStyle(Slate.textSecondary)
+                    .frame(maxWidth: .infinity)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+            .slateScreen()
+            .navigationTitle("Meal Feedback")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Slate.background, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }.foregroundStyle(Slate.textPrimary)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+        .preferredColorScheme(.dark)
+    }
+
+    private func ratingControl(title: String, detail: String, score: Binding<Int>) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.meHeadline).foregroundStyle(Slate.textPrimary)
+            Text(detail).font(.meCaption).foregroundStyle(Slate.textSecondary)
+            HStack(spacing: 10) {
+                ForEach(1...5, id: \.self) { value in
+                    Button { score.wrappedValue = value } label: {
+                        Text("\(value)")
+                            .font(.meBody.weight(.semibold))
+                            .foregroundStyle(score.wrappedValue == value ? Slate.background : Slate.textPrimary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 42)
+                            .background(score.wrappedValue == value ? Slate.textPrimary : Slate.surfaceRaised,
+                                        in: RoundedRectangle(cornerRadius: 11))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
     }
 }
 

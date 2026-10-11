@@ -23,7 +23,8 @@ final class FoodSearchViewModel {
         recentSearches = UserDefaults.standard.stringArray(forKey: recentSearchesKey) ?? []
     }
 
-    /// Called from `.task(id: query)`. SwiftUI cancels the previous task when the query changes.
+    /// Called from `.task(id: query)`. The 350 ms pause debounces typing, and
+    /// SwiftUI cancels the previous task whenever the query changes.
     func search() async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2 else {
@@ -344,7 +345,7 @@ struct FoodSearchView: View {
                 symbol: "wifi.exclamationmark",
                 title: "Search didn't load",
                 message: message,
-                actionTitle: "Try again"
+                actionTitle: "Retry Search"
             ) {
                 Task { await viewModel.search() }
             }
@@ -355,18 +356,32 @@ struct FoodSearchView: View {
     private var apiStatusIndicator: some View {
         Group {
             if let status = viewModel.apiStatus {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(status.isLive ? Accent.fat : Accent.calories)
-                        .frame(width: 7, height: 7)
-                    Text(status.title)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Slate.textSecondary)
+                HStack {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(status.isLive ? Accent.fat : Accent.calories)
+                            .frame(width: 7, height: 7)
+                        Text(status.title)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Slate.textSecondary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Slate.surfaceRaised, in: Capsule())
                     Spacer(minLength: 0)
+                    if status == .offlineCache {
+                        Button("Retry Search") {
+                            Task { await viewModel.search() }
+                        }
+                        .font(.meCaption.weight(.semibold))
+                        .foregroundStyle(Slate.textPrimary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(Slate.surfaceRaised, in: Capsule())
+                    }
                 }
                 .padding(.horizontal, 22)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("API status: \(status.title)")
+                .accessibilityElement(children: .contain)
             }
         }
     }

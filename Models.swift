@@ -128,25 +128,36 @@ struct DiaryEntry: Identifiable, Hashable, Codable, Sendable {
     var grams: Double
     var date: Date
     var category: MealCategory
+    var satietyRating: SatietyRating?
+    var customMealID: UUID?
+    var customMealName: String?
 
     init(
         id: UUID = UUID(),
         food: FoodItem,
         grams: Double,
         date: Date = .now,
-        category: MealCategory = .snacks
+        category: MealCategory = .snacks,
+        satietyRating: SatietyRating? = nil,
+        customMealID: UUID? = nil,
+        customMealName: String? = nil
     ) {
         self.id = id
         self.food = food
         self.grams = max(0, grams.isFinite ? grams : 0)
         self.date = date
         self.category = category
+        self.satietyRating = satietyRating
+        self.customMealID = customMealID
+        self.customMealName = customMealName
     }
 
     var macros: Macros { food.per100g.scaled(by: grams / 100) }
 
     // Backwards compatibility for entries persisted before meal categories were introduced.
-    private enum CodingKeys: String, CodingKey { case id, food, grams, date, category }
+    private enum CodingKeys: String, CodingKey {
+        case id, food, grams, date, category, satietyRating, customMealID, customMealName
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -156,7 +167,26 @@ struct DiaryEntry: Identifiable, Hashable, Codable, Sendable {
         grams = max(0, decodedGrams.isFinite ? decodedGrams : 0)
         date = try container.decodeIfPresent(Date.self, forKey: .date) ?? .now
         category = try container.decodeIfPresent(MealCategory.self, forKey: .category) ?? .snacks
+        satietyRating = try container.decodeIfPresent(SatietyRating.self, forKey: .satietyRating)
+        customMealID = try container.decodeIfPresent(UUID.self, forKey: .customMealID)
+        customMealName = try container.decodeIfPresent(String.self, forKey: .customMealName)
     }
+}
+
+struct SatietyRating: Codable, Hashable, Sendable {
+    var satietyScore: Int
+    var energyScore: Int
+
+    init(satietyScore: Int, energyScore: Int) {
+        self.satietyScore = min(5, max(1, satietyScore))
+        self.energyScore = min(5, max(1, energyScore))
+    }
+}
+
+struct SatietyRatingSummary: Sendable {
+    let averageSatiety: Double
+    let averageEnergy: Double
+    let mealCount: Int
 }
 
 // MARK: - Onboarding profile + target calculation
@@ -347,6 +377,32 @@ struct CustomMeal: Identifiable, Codable, Hashable, Sendable {
     var name: String
     var ingredients: [MealIngredient]
     var createdAt: Date = .now
+    var sourceServings: Int = 1
+    var sourceURL: String?
+
+    init(id: UUID = UUID(), name: String, ingredients: [MealIngredient], createdAt: Date = .now,
+         sourceServings: Int = 1, sourceURL: String? = nil) {
+        self.id = id
+        self.name = name
+        self.ingredients = ingredients
+        self.createdAt = createdAt
+        self.sourceServings = max(1, sourceServings)
+        self.sourceURL = sourceURL
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, ingredients, createdAt, sourceServings, sourceURL
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decode(String.self, forKey: .name)
+        ingredients = try container.decode([MealIngredient].self, forKey: .ingredients)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
+        sourceServings = max(1, try container.decodeIfPresent(Int.self, forKey: .sourceServings) ?? 1)
+        sourceURL = try container.decodeIfPresent(String.self, forKey: .sourceURL)
+    }
 
     var totals: Macros {
         ingredients.reduce(.zero) { $0 + $1.macros }
@@ -379,10 +435,10 @@ struct SupplementDay: Codable, Hashable, Sendable {
     var completedIDs: [String] = []
 }
 
-struct SupplementItem: Identifiable, Hashable, Sendable {
-    let id: String
-    let name: String
-    let symbol: String
+struct SupplementItem: Identifiable, Codable, Hashable, Sendable {
+    var id: String
+    var name: String
+    var symbol: String
 
     static let defaults: [SupplementItem] = [
         .init(id: "creatine", name: "Creatine", symbol: "bolt.fill"),
@@ -391,6 +447,59 @@ struct SupplementItem: Identifiable, Hashable, Sendable {
         .init(id: "multivitamin", name: "Multivitamin", symbol: "pills.fill"),
         .init(id: "vitamin-d", name: "Vitamin D", symbol: "sun.max.fill")
     ]
+}
+
+enum DashboardSection: String, Codable, CaseIterable, Identifiable, Sendable {
+    case calorieSummary
+    case macroRings
+    case macroBreakdown
+    case mealLogs
+    case waterTracker
+    case supplementTracker
+    case workoutJournal
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .calorieSummary: "Calorie Summary"
+        case .macroRings: "Macro Rings"
+        case .macroBreakdown: "Macro Progress"
+        case .mealLogs: "Daily Meals"
+        case .waterTracker: "Water Tracker"
+        case .supplementTracker: "Supplement Tracker"
+        case .workoutJournal: "Workout Journal"
+        }
+    }
+}
+
+struct DashboardSectionPreference: Codable, Identifiable, Equatable, Sendable {
+    var section: DashboardSection
+    var isEnabled: Bool
+    var id: DashboardSection { section }
+
+    static let defaults = DashboardSection.allCases.map {
+        DashboardSectionPreference(section: $0, isEnabled: true)
+    }
+}
+
+struct BodyMeasurementEntry: Identifiable, Codable, Hashable, Sendable {
+    var id: UUID = UUID()
+    var date: Date = .now
+    var bodyFatPercent: Double?
+    var waistCm: Double?
+    var hipsCm: Double?
+    var chestCm: Double?
+}
+
+struct TrainingReflectionEntry: Identifiable, Codable, Hashable, Sendable {
+    var id: UUID = UUID()
+    var date: Date = .now
+    var keyWins: String
+    var focusAreas: String
+    var workoutNotes: String
+    var rpe: Int
+    var sessionTag: String
 }
 
 // MARK: - App store
@@ -409,6 +518,14 @@ final class DiaryStore {
     var hydrationEntries: [HydrationEntry] = []
     var waterGoalMl = 2000
     var supplementDays: [SupplementDay] = []
+    var supplements = SupplementItem.defaults
+    var dashboardLayout = DashboardSectionPreference.defaults
+    var bodyMeasurements: [BodyMeasurementEntry] = []
+    var trainingReflections: [TrainingReflectionEntry] = []
+    var rolloverEnabled = false
+    var maxRolloverCap = 500
+    var bankedCalories = 0
+    private var lastRolloverProcessedDay: Date?
 
     private let persist: Bool
     private enum Key {
@@ -423,12 +540,22 @@ final class DiaryStore {
         static let hydrationEntries = "macroengine.hydration.v1"
         static let waterGoal = "macroengine.waterGoal.v1"
         static let supplementDays = "macroengine.supplements.v1"
+        static let supplementItems = "macroengine.supplementItems.v1"
+        static let dashboardLayout = "macroengine.dashboardLayout.v1"
+        static let bodyMeasurements = "macroengine.bodyMeasurements.v1"
+        static let trainingReflections = "macroengine.trainingReflections.v1"
+        static let rolloverEnabled = "macroengine.rollover.enabled.v1"
+        static let maxRolloverCap = "macroengine.rollover.cap.v1"
+        static let bankedCalories = "macroengine.rollover.banked.v1"
+        static let lastRolloverDay = "macroengine.rollover.lastDay.v1"
     }
 
     init(persist: Bool = true) {
         self.persist = persist
         guard persist else { return }
         load()
+        processRollover()
+        syncWidgetData()
     }
 
     var todaysEntries: [DiaryEntry] {
@@ -449,12 +576,40 @@ final class DiaryStore {
 
     var netCaloriesToday: Double { totals.calories - Double(caloriesBurnedToday) }
 
+    var rolloverAdjustment: Int { rolloverEnabled ? bankedCalories : 0 }
+
+    var adjustedDailyCalorieTarget: Double {
+        max(0, goals.calories + Double(rolloverAdjustment))
+    }
+
     var waterConsumedTodayMl: Int {
-        hydrationEntries.first(where: { Calendar.current.isDateInToday($0.date) })?.amountMl ?? 0
+        let localAmount = hydrationEntries.first(where: { Calendar.current.isDateInToday($0.date) })?.amountMl ?? 0
+        let sharedAmount = persist ? MacroEngineWidgetDataStore.waterAmount(for: .now) : 0
+        return max(localAmount, sharedAmount)
+    }
+
+    var foodLogStreak: Int {
+        let calendar = Calendar.current
+        let loggedDays = Set(entries.map { calendar.startOfDay(for: $0.date) })
+        var day = calendar.startOfDay(for: .now)
+        if !loggedDays.contains(day), let yesterday = calendar.date(byAdding: .day, value: -1, to: day) {
+            day = yesterday
+        }
+        var streak = 0
+        while loggedDays.contains(day) {
+            streak += 1
+            guard let previous = calendar.date(byAdding: .day, value: -1, to: day) else { break }
+            day = previous
+        }
+        return streak
     }
 
     var todaysSupplementIDs: Set<String> {
         Set(supplementDays.first(where: { Calendar.current.isDateInToday($0.date) })?.completedIDs ?? [])
+    }
+
+    var todaysTrainingReflections: [TrainingReflectionEntry] {
+        trainingReflections.filter { Calendar.current.isDateInToday($0.date) }.sorted { $0.date > $1.date }
     }
 
     func entries(for category: MealCategory) -> [DiaryEntry] {
@@ -465,21 +620,51 @@ final class DiaryStore {
         entries(for: category).reduce(.zero) { $0 + $1.macros }
     }
 
-    func add(_ food: FoodItem, grams: Double, category: MealCategory = .snacks, date: Date = .now) {
+    func add(_ food: FoodItem, grams: Double, category: MealCategory = .snacks, date: Date = .now,
+             customMealID: UUID? = nil, customMealName: String? = nil) {
         guard grams.isFinite, grams > 0 else { return }
-        entries.append(DiaryEntry(food: food, grams: grams, date: date, category: category))
+        entries.append(DiaryEntry(food: food, grams: grams, date: date, category: category,
+                                  customMealID: customMealID, customMealName: customMealName))
         save(entries, key: Key.entries)
+        syncWidgetData()
     }
 
     func log(_ meal: CustomMeal, category: MealCategory, date: Date = .now) {
         for ingredient in meal.ingredients {
-            add(ingredient.food, grams: ingredient.grams, category: category, date: date)
+            guard ingredient.grams.isFinite, ingredient.grams > 0 else { continue }
+            entries.append(DiaryEntry(food: ingredient.food, grams: ingredient.grams, category: category,
+                                      date: date, customMealID: meal.id, customMealName: meal.name))
         }
+        save(entries, key: Key.entries)
+        syncWidgetData()
     }
 
     func remove(_ entry: DiaryEntry) {
         entries.removeAll { $0.id == entry.id }
         save(entries, key: Key.entries)
+        syncWidgetData()
+    }
+
+    func updateSatietyRating(_ rating: SatietyRating?, for entry: DiaryEntry) {
+        if let mealID = entry.customMealID {
+            for index in entries.indices where entries[index].customMealID == mealID && entries[index].date == entry.date {
+                entries[index].satietyRating = rating
+            }
+        } else if let index = entries.firstIndex(where: { $0.id == entry.id }) {
+            entries[index].satietyRating = rating
+        }
+        save(entries, key: Key.entries)
+    }
+
+    func satietySummary(for meal: CustomMeal) -> SatietyRatingSummary? {
+        let mealEntries = entries.filter { $0.customMealID == meal.id && $0.satietyRating != nil }
+        let ratings = Dictionary(grouping: mealEntries, by: \.date).compactMap { $0.value.first?.satietyRating }
+        guard !ratings.isEmpty else { return nil }
+        let satiety = ratings.reduce(0) { $0 + $1.satietyScore }
+        let energy = ratings.reduce(0) { $0 + $1.energyScore }
+        return SatietyRatingSummary(averageSatiety: Double(satiety) / Double(ratings.count),
+                                    averageEnergy: Double(energy) / Double(ratings.count),
+                                    mealCount: ratings.count)
     }
 
     func addWorkout(type: String, durationMinutes: Int, notes: String, caloriesBurned: Int, date: Date = .now) {
@@ -489,26 +674,103 @@ final class DiaryStore {
                                      notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
                                      caloriesBurned: caloriesBurned))
         save(workouts, key: Key.workouts)
+        syncWidgetData()
     }
 
     func removeWorkout(_ workout: WorkoutEntry) {
         workouts.removeAll { $0.id == workout.id }
         save(workouts, key: Key.workouts)
+        syncWidgetData()
     }
 
     func addWater(_ amountMl: Int, date: Date = .now) {
         guard amountMl > 0 else { return }
+        let currentAmount = Calendar.current.isDateInToday(date)
+            ? waterConsumedTodayMl
+            : hydrationEntries.first(where: { Calendar.current.isDate($0.date, inSameDayAs: date) })?.amountMl ?? 0
         if let index = hydrationEntries.firstIndex(where: { Calendar.current.isDate($0.date, inSameDayAs: date) }) {
-            hydrationEntries[index].amountMl += amountMl
+            hydrationEntries[index].amountMl = max(hydrationEntries[index].amountMl, currentAmount) + amountMl
         } else {
-            hydrationEntries.append(HydrationEntry(date: date, amountMl: amountMl))
+            hydrationEntries.append(HydrationEntry(date: date, amountMl: currentAmount + amountMl))
         }
         save(hydrationEntries, key: Key.hydrationEntries)
+        syncWidgetData()
     }
 
     func setWaterGoal(_ amountMl: Int) {
         waterGoalMl = min(10_000, max(250, amountMl))
         if persist { UserDefaults.standard.set(waterGoalMl, forKey: Key.waterGoal) }
+        syncWidgetData()
+    }
+
+    func setRolloverEnabled(_ enabled: Bool) {
+        guard rolloverEnabled != enabled else { return }
+        rolloverEnabled = enabled
+        lastRolloverProcessedDay = Calendar.current.startOfDay(for: .now)
+        saveRolloverSettings()
+        syncWidgetData()
+    }
+
+    func setMaxRolloverCap(_ cap: Int) {
+        maxRolloverCap = min(2_000, max(100, cap))
+        bankedCalories = min(bankedCalories, maxRolloverCap)
+        saveRolloverSettings()
+        syncWidgetData()
+    }
+
+    func processRollover(now: Date = .now) {
+        guard persist else { return }
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        guard rolloverEnabled else {
+            lastRolloverProcessedDay = today
+            saveRolloverSettings()
+            return
+        }
+
+        guard var day = lastRolloverProcessedDay.map({ calendar.startOfDay(for: $0) }) else {
+            lastRolloverProcessedDay = today
+            saveRolloverSettings()
+            return
+        }
+        if day > today {
+            lastRolloverProcessedDay = today
+            saveRolloverSettings()
+            return
+        }
+
+        while day < today {
+            let foods = entries.filter { calendar.isDate($0.date, inSameDayAs: day) }
+            let dayWorkouts = workouts.filter { calendar.isDate($0.date, inSameDayAs: day) }
+            if !foods.isEmpty {
+                let consumed = foods.reduce(0.0) { $0 + $1.macros.calories }
+                let burned = dayWorkouts.reduce(0) { $0 + max(0, $1.caloriesBurned) }
+                let unused = goals.calories.whole - (consumed - Double(burned)).whole
+                bankedCalories = min(maxRolloverCap, max(0, bankedCalories + unused))
+            }
+            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = nextDay
+        }
+        lastRolloverProcessedDay = today
+        saveRolloverSettings()
+        syncWidgetData()
+    }
+
+    func refreshFromWidgetData() {
+        guard persist else { return }
+        let today = Calendar.current.startOfDay(for: .now)
+        let sharedAmount = MacroEngineWidgetDataStore.waterAmount(for: today)
+        if let index = hydrationEntries.firstIndex(where: { Calendar.current.isDateInToday($0.date) }) {
+            if sharedAmount > hydrationEntries[index].amountMl {
+                hydrationEntries[index].amountMl = sharedAmount
+                save(hydrationEntries, key: Key.hydrationEntries)
+            }
+        } else if sharedAmount > 0 {
+            hydrationEntries.append(HydrationEntry(date: .now, amountMl: sharedAmount))
+            save(hydrationEntries, key: Key.hydrationEntries)
+        }
+        processRollover()
+        syncWidgetData()
     }
 
     func toggleSupplement(_ id: String, date: Date = .now) {
@@ -523,6 +785,65 @@ final class DiaryStore {
             supplementDays.append(SupplementDay(date: date, completedIDs: [id]))
         }
         save(supplementDays, key: Key.supplementDays)
+    }
+
+    func saveSupplement(_ item: SupplementItem) {
+        let cleanName = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty else { return }
+        var updated = item
+        updated.name = cleanName
+        if let index = supplements.firstIndex(where: { $0.id == item.id }) {
+            supplements[index] = updated
+        } else {
+            supplements.append(updated)
+        }
+        save(supplements, key: Key.supplementItems)
+    }
+
+    func removeSupplement(_ item: SupplementItem) {
+        supplements.removeAll { $0.id == item.id }
+        supplementDays.indices.forEach { dayIndex in
+            supplementDays[dayIndex].completedIDs.removeAll { $0 == item.id }
+        }
+        save(supplements, key: Key.supplementItems)
+        save(supplementDays, key: Key.supplementDays)
+    }
+
+    func moveDashboardSections(fromOffsets: IndexSet, toOffset: Int) {
+        dashboardLayout.move(fromOffsets: fromOffsets, toOffset: toOffset)
+        save(dashboardLayout, key: Key.dashboardLayout)
+    }
+
+    func setDashboardSection(_ section: DashboardSection, enabled: Bool) {
+        guard let index = dashboardLayout.firstIndex(where: { $0.section == section }) else { return }
+        dashboardLayout[index].isEnabled = enabled
+        save(dashboardLayout, key: Key.dashboardLayout)
+    }
+
+    func saveBodyMeasurements(_ entry: BodyMeasurementEntry) {
+        let calendar = Calendar.current
+        if let index = bodyMeasurements.firstIndex(where: { calendar.isDate($0.date, inSameDayAs: entry.date) }) {
+            bodyMeasurements[index] = entry
+        } else {
+            bodyMeasurements.append(entry)
+        }
+        bodyMeasurements.sort { $0.date < $1.date }
+        save(bodyMeasurements, key: Key.bodyMeasurements)
+    }
+
+    func saveTrainingReflection(_ entry: TrainingReflectionEntry) {
+        if let index = trainingReflections.firstIndex(where: { $0.id == entry.id }) {
+            trainingReflections[index] = entry
+        } else {
+            trainingReflections.append(entry)
+        }
+        trainingReflections.sort { $0.date > $1.date }
+        save(trainingReflections, key: Key.trainingReflections)
+    }
+
+    func removeTrainingReflection(_ entry: TrainingReflectionEntry) {
+        trainingReflections.removeAll { $0.id == entry.id }
+        save(trainingReflections, key: Key.trainingReflections)
     }
 
     func finishOnboarding(profile: UserProfile, goals: Macros) {
@@ -540,6 +861,7 @@ final class DiaryStore {
         if weightEntries.isEmpty {
             recordWeight(profile.weightKg)
         }
+        syncWidgetData()
     }
 
     func updateGoals(_ newGoals: Macros) {
@@ -550,6 +872,7 @@ final class DiaryStore {
             fat: max(0, newGoals.fat)
         )
         save(goals, key: Key.goals)
+        syncWidgetData()
     }
 
     func updateProfileAndGoals(_ newProfile: UserProfile, goals newGoals: Macros) {
@@ -615,6 +938,35 @@ final class DiaryStore {
         return try? JSONDecoder().decode(type, from: data)
     }
 
+    private func saveRolloverSettings() {
+        guard persist else { return }
+        let defaults = UserDefaults.standard
+        defaults.set(rolloverEnabled, forKey: Key.rolloverEnabled)
+        defaults.set(maxRolloverCap, forKey: Key.maxRolloverCap)
+        defaults.set(bankedCalories, forKey: Key.bankedCalories)
+        if let lastRolloverProcessedDay {
+            defaults.set(lastRolloverProcessedDay, forKey: Key.lastRolloverDay)
+        }
+    }
+
+    private func syncWidgetData() {
+        guard persist else { return }
+        MacroEngineWidgetDataStore.write(MacroWidgetSnapshot(
+            day: Calendar.current.startOfDay(for: .now),
+            caloriesEaten: totals.calories,
+            calorieTarget: adjustedDailyCalorieTarget,
+            proteinEaten: totals.protein,
+            proteinGoal: goals.protein,
+            carbsEaten: totals.carbs,
+            carbsGoal: goals.carbs,
+            fatEaten: totals.fat,
+            fatGoal: goals.fat,
+            waterConsumedMl: waterConsumedTodayMl,
+            waterGoalMl: waterGoalMl,
+            foodLogStreak: foodLogStreak
+        ))
+    }
+
     private func load() {
         entries = decode([DiaryEntry].self, key: Key.entries) ?? []
         goals = decode(Macros.self, key: Key.goals) ?? goals
@@ -627,6 +979,14 @@ final class DiaryStore {
         hydrationEntries = decode([HydrationEntry].self, key: Key.hydrationEntries) ?? []
         waterGoalMl = UserDefaults.standard.object(forKey: Key.waterGoal) as? Int ?? waterGoalMl
         supplementDays = decode([SupplementDay].self, key: Key.supplementDays) ?? []
+        supplements = decode([SupplementItem].self, key: Key.supplementItems) ?? SupplementItem.defaults
+        dashboardLayout = decode([DashboardSectionPreference].self, key: Key.dashboardLayout) ?? .defaults
+        bodyMeasurements = decode([BodyMeasurementEntry].self, key: Key.bodyMeasurements) ?? []
+        trainingReflections = decode([TrainingReflectionEntry].self, key: Key.trainingReflections) ?? []
+        rolloverEnabled = UserDefaults.standard.object(forKey: Key.rolloverEnabled) as? Bool ?? false
+        maxRolloverCap = min(2_000, max(100, UserDefaults.standard.object(forKey: Key.maxRolloverCap) as? Int ?? 500))
+        bankedCalories = min(maxRolloverCap, max(0, UserDefaults.standard.object(forKey: Key.bankedCalories) as? Int ?? 0))
+        lastRolloverProcessedDay = UserDefaults.standard.object(forKey: Key.lastRolloverDay) as? Date
     }
 }
 

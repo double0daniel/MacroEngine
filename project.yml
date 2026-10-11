@@ -21,11 +21,17 @@ targets:
       - DashboardView.swift
       - FoodSearchView.swift
       - FoodLibraryViews.swift
+      - RecipeImporterService.swift
+      - RecipeImportPreviewView.swift
       - OnboardingView.swift
       - MacroEngineApp.swift
       - OpenFoodFactsService.swift
       - BarcodeScannerView.swift
       - AppIconArtwork.swift
+      - WidgetData.swift
+    dependencies:
+      - target: MacroEngineWidgetExtension
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.double0daniel.MacroEngine
@@ -37,9 +43,32 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_NSCameraUsageDescription: "MacroEngine uses the camera to scan food barcodes."
         INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+        CODE_SIGN_ENTITLEMENTS: MacroEngine.entitlements
     scheme:
       testTargets:
         - MacroEngineTests
+
+  MacroEngineWidgetExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - WidgetExtension.swift
+      - WidgetData.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.double0daniel.MacroEngine.WidgetExtension
+        PRODUCT_NAME: MacroEngineWidgetExtension
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: "YES"
+        APPLICATION_EXTENSION_API_ONLY: "YES"
+        SKIP_INSTALL: "YES"
+        CODE_SIGN_ENTITLEMENTS: MacroEngineWidgetExtension.entitlements
+    info:
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
 
   MacroEngineTests:
     type: bundle.unit-test

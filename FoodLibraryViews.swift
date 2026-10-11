@@ -73,6 +73,7 @@ struct FavoritesSectionView: View {
 struct CustomMealsSectionView: View {
     @Environment(DiaryStore.self) private var diary
     @State private var showingCreateMeal = false
+    @State private var showingRecipeImporter = false
     @State private var category: MealCategory
 
     init(initialCategory: MealCategory = .snacks) {
@@ -83,12 +84,23 @@ struct CustomMealsSectionView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Button { showingCreateMeal = true } label: {
-                    Text("Create Custom\nMeal")
+                    Text("Create Meal")
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 2)
                 }
                 .buttonStyle(.primary)
+
+                Button { showingRecipeImporter = true } label: {
+                    Label("Import Recipe from Link", systemImage: "link")
+                        .font(.meBody.weight(.semibold))
+                        .foregroundStyle(Slate.textPrimary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Slate.surface, in: Capsule())
+                        .overlay(Capsule().strokeBorder(Slate.stroke, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
 
                 if !diary.customMeals.isEmpty {
                     HStack {
@@ -114,7 +126,7 @@ struct CustomMealsSectionView: View {
                         message: diary.favoriteFoods.isEmpty
                             ? "Save a few foods as favourites first, then combine their portions into a custom meal."
                             : "Combine your favourite foods into a meal you can log with one tap.",
-                        actionTitle: "Create custom meal"
+                        actionTitle: "Create Meal"
                     ) { showingCreateMeal = true }
                     .card(padding: 8)
                 } else {
@@ -133,6 +145,11 @@ struct CustomMealsSectionView: View {
                 CreateCustomMealView()
             }
         }
+        .sheet(isPresented: $showingRecipeImporter) {
+            NavigationStack {
+                RecipeImportPreviewView()
+            }
+        }
     }
 
     private func customMealRow(_ meal: CustomMeal) -> some View {
@@ -148,14 +165,34 @@ struct CustomMealsSectionView: View {
                     Text(meal.name)
                         .font(.meHeadline)
                         .foregroundStyle(Slate.textPrimary)
-                    Text(meal.ingredients.map { "\($0.food.name) · \($0.grams.whole) g" }.joined(separator: ", "))
-                        .font(.meCaption)
-                        .foregroundStyle(Slate.textSecondary)
-                        .lineLimit(3)
+                    if meal.sourceURL != nil {
+                        Text("Imported recipe · \(meal.sourceServings) servings per batch")
+                            .font(.meCaption)
+                            .foregroundStyle(Slate.textSecondary)
+                            .lineLimit(2)
+                    } else {
+                        Text(meal.ingredients.map { "\($0.food.name) · \($0.grams.whole) g" }.joined(separator: ", "))
+                            .font(.meCaption)
+                            .foregroundStyle(Slate.textSecondary)
+                            .lineLimit(3)
+                    }
                     Text("\(meal.totals.calories.whole) kcal")
                         .font(.meNumber)
                         .foregroundStyle(Slate.textPrimary)
                     MacroChips(macros: meal.totals)
+                    if let rating = diary.satietySummary(for: meal) {
+                        Label("Satiety & Energy Summary", systemImage: "heart.text.square.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Slate.textPrimary)
+                        Text(String(format: "Satiety %.1f/5 · Energy %.1f/5 · %d log(s)",
+                                    rating.averageSatiety, rating.averageEnergy, rating.mealCount))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Slate.textSecondary)
+                    } else {
+                        Label("Satiety & Energy: no ratings yet", systemImage: "heart")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Slate.textTertiary)
+                    }
                 }
                 Spacer(minLength: 0)
             }
