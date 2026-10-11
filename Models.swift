@@ -510,6 +510,7 @@ final class DiaryStore {
     var entries: [DiaryEntry] = []
     var goals = Macros(calories: 2400, protein: 160, carbs: 260, fat: 75)
     var profile: UserProfile?
+    var activeEnergyBurnedToday = 0
     var hasCompletedOnboarding = false
     var favoriteFoods: [FoodItem] = []
     var customMeals: [CustomMeal] = []
@@ -578,8 +579,20 @@ final class DiaryStore {
 
     var rolloverAdjustment: Int { rolloverEnabled ? bankedCalories : 0 }
 
+    var baseDailyCalorieTarget: Double {
+        guard let profile else { return goals.calories }
+        return MacroTargetCalculator.estimate(for: profile).tdee
+    }
+
     var adjustedDailyCalorieTarget: Double {
-        max(0, goals.calories + Double(rolloverAdjustment))
+        max(0, baseDailyCalorieTarget + Double(max(0, activeEnergyBurnedToday)) + Double(rolloverAdjustment))
+    }
+
+    func updateActiveEnergyBurnedToday(_ calories: Int) {
+        let updated = max(0, calories)
+        guard activeEnergyBurnedToday != updated else { return }
+        activeEnergyBurnedToday = updated
+        syncWidgetData()
     }
 
     var waterConsumedTodayMl: Int {
@@ -700,6 +713,9 @@ final class DiaryStore {
         }
         save(hydrationEntries, key: Key.hydrationEntries)
         syncWidgetData()
+        if persist {
+            HealthKitManager.shared.saveWaterIntake(amountMl: amountMl, date: date)
+        }
     }
 
     func setWaterGoal(_ amountMl: Int) {
@@ -750,7 +766,7 @@ final class DiaryStore {
             if !foods.isEmpty {
                 let consumed = foods.reduce(0.0) { $0 + $1.macros.calories }
                 let burned = dayWorkouts.reduce(0) { $0 + max(0, $1.caloriesBurned) }
-                let unused = goals.calories.whole - (consumed - Double(burned)).whole
+                let unused = baseDailyCalorieTarget.whole - (consumed - Double(burned)).whole
                 bankedCalories = min(maxRolloverCap, max(0, bankedCalories + unused))
             }
             guard let nextDay = calendar.date(byAdding: .day, value: 1, to: day) else { break }
@@ -931,6 +947,7 @@ final class DiaryStore {
         entries = []
         goals = Macros(calories: 2400, protein: 160, carbs: 260, fat: 75)
         profile = nil
+        activeEnergyBurnedToday = 0
         hasCompletedOnboarding = false
         favoriteFoods = []
         customMeals = []

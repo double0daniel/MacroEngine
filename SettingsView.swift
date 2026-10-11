@@ -210,10 +210,12 @@ struct SettingsView: View {
     }
 
     private var rolloverCard: some View {
-        VStack(alignment: .leading, spacing: 13) {
+        VStack(alignment: .leading, spacing: 12) {
             Label("Rollover Calorie Settings", systemImage: "arrow.left.arrow.right")
                 .font(.meHeadline)
                 .foregroundStyle(Slate.textPrimary)
+                .multilineTextAlignment(.leading)
+
             Toggle(isOn: Binding(
                 get: { diary.rolloverEnabled },
                 set: { diary.setRolloverEnabled($0) }
@@ -221,37 +223,65 @@ struct SettingsView: View {
                 Text("Track unused calories")
                     .font(.meBody)
                     .foregroundStyle(Slate.textPrimary)
+                    .multilineTextAlignment(.leading)
             }
             .tint(Slate.textPrimary)
 
-            Text("Unused calories from logged days add to your bank. Eating above your base target uses the bank. The weekly bank balance is capped at your limit.")
-                .font(.meCaption)
-                .foregroundStyle(Slate.textSecondary)
-
             if diary.rolloverEnabled {
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Banked calories")
-                            .font(.meCaption)
-                            .foregroundStyle(Slate.textSecondary)
-                        Text("\(diary.bankedCalories) kcal available")
+                Text("Unused calories from logged days add to your bank. Eating above your base target uses the bank. The weekly bank balance is capped at your limit.")
+                    .font(.meCaption)
+                    .foregroundStyle(Slate.textSecondary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("Banked calories: \(diary.bankedCalories) kcal available")
+                    .font(.meNumber)
+                    .foregroundStyle(Slate.textPrimary)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(Slate.surfaceRaised, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                HStack(spacing: 10) {
+                    Text("Weekly bank cap")
+                        .font(.meBody)
+                        .foregroundStyle(Slate.textSecondary)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    HStack(spacing: 10) {
+                        rolloverCapButton(symbol: "minus", accessibilityLabel: "Decrease weekly bank cap") {
+                            diary.setMaxRolloverCap(diary.maxRolloverCap - 50)
+                        }
+
+                        Text("\(diary.maxRolloverCap) kcal")
                             .font(.meNumber)
                             .foregroundStyle(Slate.textPrimary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize()
+
+                        rolloverCapButton(symbol: "plus", accessibilityLabel: "Increase weekly bank cap") {
+                            diary.setMaxRolloverCap(diary.maxRolloverCap + 50)
+                        }
                     }
-                    Spacer()
-                    Stepper(value: Binding(
-                        get: { diary.maxRolloverCap },
-                        set: { diary.setMaxRolloverCap($0) }
-                    ), in: 100...2_000, step: 50) {
-                        Text("Weekly bank cap: \(diary.maxRolloverCap) kcal")
-                            .font(.meCaption.monospacedDigit())
-                            .foregroundStyle(Slate.textPrimary)
-                    }
-                    .fixedSize()
                 }
             }
         }
         .card()
+    }
+
+    private func rolloverCapButton(symbol: String, accessibilityLabel: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Slate.textPrimary)
+                .frame(width: 36, height: 36)
+                .background(Slate.surfaceRaised, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(symbol == "minus" ? diary.maxRolloverCap <= 100 : diary.maxRolloverCap >= 2_000)
+        .opacity((symbol == "minus" ? diary.maxRolloverCap <= 100 : diary.maxRolloverCap >= 2_000) ? 0.4 : 1)
+        .accessibilityLabel(accessibilityLabel)
     }
 
     private var smartPushRemindersCard: some View {

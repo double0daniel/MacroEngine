@@ -6,5 +6,9 @@
 	<array>
 		<string>group.com.macroengine.app</string>
 	</array>
+	<key>com.apple.developer.healthkit</key>
+	<true/>
+	<key>com.apple.developer.healthkit.background-delivery</key>
+	<true/>
 </dict>
 </plist>

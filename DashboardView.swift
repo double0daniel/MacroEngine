@@ -260,8 +260,9 @@ struct DashboardView: View {
         case .calorieSummary:
             CalorieSummaryCard(eaten: diary.totals.calories, burned: diary.caloriesBurnedToday,
                                goal: diary.adjustedDailyCalorieTarget,
-                               baseTarget: diary.goals.calories,
-                               rolloverAdjustment: diary.rolloverAdjustment)
+                               baseTarget: diary.baseDailyCalorieTarget,
+                               rolloverAdjustment: diary.rolloverAdjustment,
+                               watchActiveBurn: diary.activeEnergyBurnedToday)
         case .macroRings:
             MacroSegmentSummaryCard(totals: diary.totals, goals: diary.goals)
         case .macroBreakdown:
@@ -499,6 +500,7 @@ struct CalorieSummaryCard: View {
     let goal: Double
     var baseTarget: Double? = nil
     var rolloverAdjustment: Int = 0
+    var watchActiveBurn: Int = 0
 
     private var net: Double { eaten - Double(max(0, burned)) }
     private var remaining: Double { goal - net }
@@ -532,12 +534,27 @@ struct CalorieSummaryCard: View {
                              color: rolloverAdjustment > 0 ? Accent.fat : Slate.textSecondary)
                 targetDetail(title: "Adjusted Net Target", value: "\(goal.whole) kcal", color: Slate.textPrimary)
             }
+
+            if watchActiveBurn > 0 {
+                HStack(spacing: 8) {
+                    Image(systemName: "applewatch")
+                        .foregroundStyle(Accent.calories)
+                    Text("Watch active energy")
+                        .foregroundStyle(Slate.textSecondary)
+                    Spacer()
+                    Text("+\(watchActiveBurn) kcal")
+                        .foregroundStyle(Accent.calories)
+                        .monospacedDigit()
+                }
+                .font(.meCaption)
+                .accessibilityElement(children: .combine)
+            }
         }
         .frame(maxWidth: .infinity)
         .card(padding: 24)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Calories")
-        .accessibilityValue("\(eaten.whole) eaten, \(max(0, burned)) burned, base target \((baseTarget ?? goal).whole), rollover adjustment \(rolloverAdjustment), adjusted net target \(goal.whole). \(abs(remaining).whole) \(remaining >= 0 ? "left" : "over").")
+        .accessibilityValue("\(eaten.whole) eaten, \(max(0, burned)) burned, base target \((baseTarget ?? goal).whole), watch active energy \(watchActiveBurn), rollover adjustment \(rolloverAdjustment), adjusted net target \(goal.whole). \(abs(remaining).whole) \(remaining >= 0 ? "left" : "over").")
     }
 
     private func stat(title: String, value: Int, symbol: String, tinted: Bool) -> some View {

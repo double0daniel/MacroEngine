@@ -45,17 +45,27 @@ private struct AppRootView: View {
         .onAppear {
             diary.processRollover()
             diary.refreshFromWidgetData()
-            Task { await refreshNotificationReminders() }
+            Task {
+                await refreshNotificationReminders()
+                await startHealthKitSync()
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 diary.processRollover()
                 diary.refreshFromWidgetData()
-                Task { await refreshNotificationReminders() }
+                Task {
+                    await refreshNotificationReminders()
+                    await startHealthKitSync()
+                }
             }
         }
         .onChange(of: diary.hasCompletedOnboarding) { _, isComplete in
-            if !isComplete { selectedPage = 1 }
+            if isComplete {
+                Task { await startHealthKitSync() }
+            } else {
+                selectedPage = 1
+            }
         }
     }
 
@@ -78,6 +88,11 @@ private struct AppRootView: View {
             userName: userName,
             loggedCategoriesToday: loggedCategories
         )
+    }
+
+    private func startHealthKitSync() async {
+        guard diary.hasCompletedOnboarding else { return }
+        await HealthKitManager.shared.requestAccessAndStartSync(diary: diary)
     }
 
     private func pageButton(_ title: String, symbol: String, index: Int) -> some View {
