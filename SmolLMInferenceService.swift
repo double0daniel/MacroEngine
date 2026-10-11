@@ -32,10 +32,10 @@ enum OfflineQueryResponder {
 
 private enum GroqAPIClient {
     private static let endpoint = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
-    private static let systemPrompt = "You are MacroEngine's UK fitness coach mascot. Answer the user in ONE concise sentence (max 20 words) with clear fitness advice."
+    private static let systemPrompt = "You are MacroEngine, a smart UK fitness coach mascot. Provide direct, conversational, and actionable advice tailored to the user's question. Do not just repeat remaining macros unless relevant. Keep under 25 words."
 
     static func complete(
-        apiKey: String,
+        cleanKey: String,
         remainingCalories: Int,
         remainingProtein: Int,
         userQuery: String
@@ -48,13 +48,13 @@ private enum GroqAPIClient {
 
         var request = URLRequest(url: endpoint, timeoutInterval: 2.5)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(cleanKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let payload: [String: Any] = [
             "model": "llama-3.1-8b-instant",
-            "max_completion_tokens": 40,
-            "temperature": 0.5,
+            "max_completion_tokens": 60,
+            "temperature": 0.7,
             "messages": [
                 ["role": "system", "content": systemPrompt],
                 [
@@ -128,24 +128,24 @@ final class SmolLMInferenceService: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        let apiKey = (Bundle.main.object(forInfoDictionaryKey: "GROQ_API_KEY") as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let apiKey = Bundle.main.object(forInfoDictionaryKey: "GROQ_API_KEY") as? String ?? ""
+        let cleanKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let generatedText: String?
 
-        if apiKey.isEmpty || apiKey == "$(GROQ_API_KEY)" {
+        if cleanKey.isEmpty || cleanKey == "$(GROQ_API_KEY)" {
             print("Groq API key is not configured; using offline coaching rules.")
             generatedText = nil
         } else {
             generatedText = await Task.detached(priority: .userInitiated) {
                 do {
                     return try await GroqAPIClient.complete(
-                        apiKey: apiKey,
+                        cleanKey: cleanKey,
                         remainingCalories: remainingCalories,
                         remainingProtein: remainingProtein,
                         userQuery: userQuery
                     )
                 } catch {
-                    print("⚠️ Groq API Error: \(error.localizedDescription)")
+                    print("\u{26A0}\u{FE0F} Groq Error: \(error.localizedDescription)")
                     return nil
                 }
             }.value
