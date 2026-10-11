@@ -5,6 +5,10 @@ struct DashboardView: View {
     @Environment(DiaryStore.self) private var diary
     @AppStorage("userName") private var userName = ""
     @State private var searchCategory: MealCategory?
+    @State private var userQuery: String = ""
+    @State private var mascotResponse: String? = nil
+    @State private var askMascotState: MascotState = .coaching
+    @FocusState private var isInputFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -23,12 +27,14 @@ struct DashboardView: View {
                             dashboardSection(preference.section)
                         }
                     }
+                    askMacroAI
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
                 .padding(.bottom, 24)
             }
             .scrollIndicators(.hidden)
+            .scrollDismissesKeyboard(.interactively)
             .slateScreen()
             .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .bottom) { addButton }
@@ -76,6 +82,141 @@ struct DashboardView: View {
         if calorieGoalReached || proteinGoalReached { return .celebrating }
         if diary.totals.calories > 0 || diary.totals.protein > 0 { return .coaching }
         return .neutral
+    }
+
+    private var askMacroAI: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                MascotAvatarView(state: askMascotState, size: .regular, layout: .badge)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Ask Macro AI")
+                        .font(.meHeadline)
+                        .foregroundStyle(Slate.textPrimary)
+                    Text("Get instant feedback on macros, recovery, or goals")
+                        .font(.meCaption)
+                        .foregroundStyle(Slate.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            HStack(spacing: 10) {
+                TextField(
+                    "Ask a question (e.g. How much protein do I need?)...",
+                    text: $userQuery,
+                    axis: .vertical
+                )
+                .font(.meBody)
+                .foregroundStyle(Slate.textPrimary)
+                .tint(Accent.calories)
+                .lineLimit(1...3)
+                .submitLabel(.send)
+                .focused($isInputFocused)
+                .onSubmit { submitQuestion() }
+                .padding(.horizontal, 13)
+                .padding(.vertical, 12)
+                .frame(minHeight: 46)
+                .background(Slate.background, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(Slate.stroke.opacity(0.7), lineWidth: 1))
+
+                Button(action: submitQuestion) {
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Slate.background)
+                        .frame(width: 46, height: 46)
+                        .background(Accent.calories, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(userQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .opacity(userQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1)
+                .accessibilityLabel("Ask Macro AI")
+            }
+
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    suggestionChip("Am I on track for protein?")
+                    suggestionChip("How does calorie rollover work?")
+                    suggestionChip("Suggest a high-protein snack")
+                }
+            }
+            .scrollIndicators(.hidden)
+
+            if let mascotResponse {
+                Text(mascotResponse)
+                    .font(.meBody)
+                    .foregroundStyle(Slate.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(Slate.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .accessibilityLabel("Macro AI response: \(mascotResponse)")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card(padding: 16)
+    }
+
+    private func suggestionChip(_ title: String) -> some View {
+        Button {
+            userQuery = title
+            answerQuestion(title)
+            isInputFocused = false
+        } label: {
+            Text(title)
+                .font(.meCaption)
+                .foregroundStyle(Slate.textPrimary)
+                .lineLimit(1)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(Slate.surfaceRaised, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func submitQuestion() {
+        let query = userQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
+        answerQuestion(query)
+        isInputFocused = false
+    }
+
+    private func answerQuestion(_ query: String) {
+        let text = query.lowercased()
+        let protein = diary.totals.protein.whole
+        let proteinGoal = diary.goals.protein.whole
+        let proteinRemaining = max(0, proteinGoal - protein)
+        let calorieTarget = diary.adjustedDailyCalorieTarget.whole
+        let caloriesRemaining = max(0, calorieTarget - diary.totals.calories.whole)
+        let name = greetingName == "there" ? "" : "\(greetingName), "
+
+        let answer: String
+        var state: MascotState = .coaching
+        if text.contains("protein") && (text.contains("track") || text.contains("enough") || text.contains("need")) {
+            if proteinGoal > 0 && protein >= proteinGoal {
+                answer = "Nice work, \(name)you've reached your protein goal: \(protein) of \(proteinGoal) g. Keep your meals balanced for the rest of the day."
+                state = .celebrating
+            } else {
+                answer = "You're at \(protein) of \(proteinGoal) g protein today, with about \(proteinRemaining) g to go. A protein-rich snack or a serving of lean protein at your next meal can help close the gap."
+            }
+        } else if text.contains("rollover") || text.contains("bank") {
+            if diary.rolloverEnabled {
+                answer = "Calorie rollover is on. You currently have \(diary.bankedCalories) kcal banked, adding \(diary.rolloverAdjustment) kcal to today's base target of \(diary.goals.calories.whole) kcal. Unused calories can build the bank up to your \(diary.maxRolloverCap) kcal cap."
+            } else {
+                answer = "Calorie rollover is currently off. When enabled in Settings, eligible unused calories can be banked for later days, up to your chosen cap."
+            }
+        } else if text.contains("snack") || text.contains("food") {
+            answer = "A simple high-protein option is Greek yogurt or skyr; check the label for the serving size and macros. You have about \(proteinRemaining) g protein and \(caloriesRemaining) kcal remaining today, so choose a portion that fits."
+        } else if text.contains("calorie") || text.contains("calories") || text.contains("track") {
+            answer = "You've logged \(diary.totals.calories.whole) kcal against an adjusted target of \(calorieTarget) kcal, with about \(caloriesRemaining) kcal remaining. Your target includes any active rollover adjustment."
+        } else if text.contains("recover") || text.contains("recovery") || text.contains("workout") || text.contains("training") {
+            answer = "For recovery, prioritize a meal with protein and carbohydrates, drink to your hydration goal, and give sleep time to do its work. Today you're at \(protein) of \(proteinGoal) g protein and \(diary.waterConsumedTodayMl) ml water."
+        } else {
+            answer = "\(name)today you're at \(diary.totals.calories.whole) kcal and \(protein) g protein. Your targets are \(calorieTarget) kcal and \(proteinGoal) g protein. Ask me about protein, calories, rollover, snacks, or recovery for a more specific tip."
+        }
+
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+            askMascotState = state
+            mascotResponse = answer
+        }
     }
 
     private var addButton: some View {
