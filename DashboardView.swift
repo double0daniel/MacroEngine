@@ -214,11 +214,24 @@ struct DashboardView: View {
             remainingCals: remainingCalories,
             remainingProtein: remainingProtein
         )
+        let fallbackAnswer = LocalAIEngine.deterministicInsight(
+            for: query,
+            userName: userName,
+            remainingCals: remainingCalories,
+            remainingProtein: remainingProtein,
+            remainingCarbs: remainingCarbs,
+            remainingFat: remainingFat,
+            goal: goal,
+            waterMl: diary.waterConsumedTodayMl
+        )
+        withAnimation(.easeInOut(duration: 0.25)) {
+            mascotResponse = fallbackAnswer
+        }
 
         Task { @MainActor in
             await Task.yield()
             guard activeAIQuery == queryID else { return }
-            let answer = LocalAIEngine.generateInsight(
+            let answer = await LocalAIEngine.generateInsight(
                 for: query,
                 userName: userName,
                 remainingCals: remainingCalories,

@@ -3,6 +3,10 @@ import Foundation
 /// On-device MacroEngine coach. Responses are generated from the current diary context;
 /// no query or personal data is sent to a server.
 enum LocalAIEngine {
+    private enum InferenceTimeout: Error {
+        case elapsed
+    }
+
     private enum Intent {
         case food
         case progress
@@ -42,9 +46,67 @@ enum LocalAIEngine {
         FoodOption(name: "Egg", unitGrams: 1, calories: 78, protein: 6.3, carbs: 0.6, fat: 5.3, aliases: ["egg", "eggs"])
     ]
 
-    /// Generates a personalised answer using the current day's remaining allowance.
-    /// Calorie and macro values are estimates for guidance, not medical advice.
+    /// Computes the rule-based answer first, then gives the bundled model up to
+    /// 1.5 seconds to phrase a personalised response. Any model issue uses the
+    /// deterministic answer, which remains available entirely on-device.
     static func generateInsight(
+        for query: String,
+        userName: String,
+        remainingCals: Int,
+        remainingProtein: Int,
+        remainingCarbs: Int,
+        remainingFat: Int,
+        goal: String,
+        waterMl: Int
+    ) async -> String {
+        let fallback = deterministicInsight(
+            for: query,
+            userName: userName,
+            remainingCals: remainingCals,
+            remainingProtein: remainingProtein,
+            remainingCarbs: remainingCarbs,
+            remainingFat: remainingFat,
+            goal: goal,
+            waterMl: waterMl
+        )
+
+        let timeOfDay: String
+        switch Calendar.current.component(.hour, from: .now) {
+        case 6...11: timeOfDay = "morning"
+        case 12...17: timeOfDay = "afternoon"
+        case 18...22: timeOfDay = "evening"
+        default: timeOfDay = "late night"
+        }
+        let foodFits = remainingCals >= 400
+        let prompt = "System: You are MacroEngine's UK fitness mascot. Telemetry: \(remainingCals) kcal left, \(remainingProtein)g protein left, \(timeOfDay). User asked: '\(query)'. Rule: \(foodFits ? "Fits in budget" : "Exceeds budget"). Keep it direct and encouraging."
+
+        do {
+            let generated = try await withThrowingTaskGroup(of: String?.self) { group in
+                group.addTask {
+                    await SmolLMInferenceService.shared.generateResponse(prompt: prompt)
+                }
+                group.addTask {
+                    try await Task.sleep(for: .milliseconds(1_500))
+                    throw InferenceTimeout.elapsed
+                }
+                defer { group.cancelAll() }
+                return try await group.next() ?? nil
+            }
+            if let generated {
+                let response = generated.trimmingCharacters(in: .whitespacesAndNewlines)
+                if response.count >= 12, response.count <= 600,
+                   !response.localizedCaseInsensitiveContains("user asked:") {
+                    return response
+                }
+            }
+        } catch {
+            // Model loading, prediction, and timeout errors all preserve the rule answer.
+        }
+        return fallback
+    }
+
+    /// Calorie and macro values are estimates for guidance, not medical advice.
+    static func deterministicInsight(
         for query: String,
         userName: String,
         remainingCals: Int,

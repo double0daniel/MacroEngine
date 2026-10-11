@@ -43,6 +43,7 @@ private struct AppRootView: View {
         }
         .animation(.easeInOut(duration: 0.25), value: diary.hasCompletedOnboarding)
         .onAppear {
+            _ = SmolLMInferenceService.shared
             diary.processRollover()
             diary.refreshFromWidgetData()
             Task {

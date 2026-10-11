@@ -13,6 +13,8 @@ targets:
     sources:
       - path: Assets.xcassets
         buildPhase: resources
+      - path: Models
+        buildPhase: resources
       - WidgetDataManager.swift
       - NotificationManager.swift
       - HealthKitManager.swift
@@ -24,6 +26,7 @@ targets:
       - SettingsView.swift
       - DashboardView.swift
       - LocalAIEngine.swift
+      - SmolLMInferenceService.swift
       - FoodSearchView.swift
       - FoodLibraryViews.swift
       - RecipeImporterService.swift
