@@ -1,0 +1,10 @@
+.DS_Store
+.vscode/
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcuserdatad/
+*.xccheckout
+*.xcscmblueprint
+MacroEngine.xcodeproj/

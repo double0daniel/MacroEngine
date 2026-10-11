@@ -1,0 +1,51 @@
+name: MacroEngine
+options:
+  bundleIdPrefix: com.double0daniel
+  projectFormat: xcode15_0
+  deploymentTarget:
+    iOS: "17.0"
+  developmentLanguage: en-GB
+
+targets:
+  MacroEngine:
+    type: application
+    platform: iOS
+    sources:
+      - Theme.swift
+      - Models.swift
+      - Components.swift
+      - DashboardView.swift
+      - FoodSearchView.swift
+      - FoodLibraryViews.swift
+      - OnboardingView.swift
+      - MacroEngineApp.swift
+      - OpenFoodFactsService.swift
+      - BarcodeScannerView.swift
+      - AppIconArtwork.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.double0daniel.MacroEngine
+        PRODUCT_NAME: MacroEngine
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_NSCameraUsageDescription: "MacroEngine uses the camera to scan food barcodes."
+        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+    scheme:
+      testTargets:
+        - MacroEngineTests
+
+  MacroEngineTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+    dependencies:
+      - target: MacroEngine
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.double0daniel.MacroEngineTests
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        GENERATE_INFOPLIST_FILE: "YES"
