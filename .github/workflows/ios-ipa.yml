@@ -25,7 +25,7 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           set -euo pipefail
-          for secret_name in IOS_CERTIFICATE_BASE64 IOS_CERTIFICATE_PASSWORD IOS_PROVISIONING_PROFILE_BASE64 KEYCHAIN_PASSWORD; do
+          for secret_name in IOS_CERTIFICATE_BASE64 IOS_CERTIFICATE_PASSWORD IOS_PROVISIONING_PROFILE_BASE64 IOS_TEAM_ID KEYCHAIN_PASSWORD; do
             if [[ -z "${!secret_name:-}" ]]; then
               echo "::error::Required repository Actions secret $secret_name is missing or empty. See the IPA signing setup in README.md."
               exit 1
