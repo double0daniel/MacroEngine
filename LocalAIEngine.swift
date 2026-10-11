@@ -1,6 +1,6 @@
 import Foundation
 
-/// Generates Macro's replies with the bundled on-device SmolLM model.
+/// Generates Macro's replies with the bundled on-device Qwen model.
 enum LocalAIEngine {
     static func generateInsight(
         for query: String,
@@ -12,16 +12,13 @@ enum LocalAIEngine {
         goal: String,
         waterMl: Int
     ) async -> String {
-        // Resolve the current telemetry before asking the model to reason about it.
         let remainingCalories = remainingCals
         let proteinRemainingGrams = remainingProtein
-        let foodFits = remainingCalories >= 400
         let prompt = """
         <|im_start|>system
-        You are MacroEngine's UK fitness mascot. Keep answers short (max 15 words).
-        Telemetry: \(remainingCalories) kcal, \(proteinRemainingGrams)g protein left. Fits budget: \(foodFits ? "Yes" : "No").<|im_end|>
+        You are MacroEngine's UK fitness coach. Provide concise, helpful fitness/macro advice in exactly ONE sentence (around 20 words). Never output multiple sentences or line breaks.<|im_end|>
         <|im_start|>user
-        \(query)<|im_end|>
+        Telemetry: \(remainingCalories) kcal, \(proteinRemainingGrams)g protein. \(query)<|im_end|>
         <|im_start|>assistant
         """
         return await SmolLMInferenceService.shared.generateResponse(prompt: prompt)

@@ -68,10 +68,7 @@ private final class SmolLMInferenceRace: @unchecked Sendable {
 
 private enum SmolLMModelRunner {
     private static let maximumContextTokens = 128
-    private static let maximumGenerationTokens = 40
-    private static let temperature = 0.7
-    private static let topP = 0.9
-    private static let repetitionPenalty = 1.15
+    private static let maximumGenerationTokens = 35
 
     static func generate(prompt: String, model: MLModel, tokenizer: SmolLMTokenizer) throws -> String? {
         guard #available(iOS 18.0, *) else { return nil }
@@ -81,6 +78,7 @@ private enum SmolLMModelRunner {
         )
         guard !inputTokens.isEmpty else { return nil }
 
+        // Each request gets a fresh KV cache so prior questions cannot affect it.
         let state = model.makeState()
         var nextInputTokens = inputTokens
         var pastTokenCount = 0
@@ -103,19 +101,11 @@ private enum SmolLMModelRunner {
             guard let logits = output.featureValue(for: "logits")?.multiArrayValue else { return nil }
 
             let position = nextInputTokens.count - 1
-            let nextToken = sample(
-                logits,
-                position: position,
-                generated: generated,
-                temperature: temperature,
-                topP: topP,
-                repetitionPenalty: repetitionPenalty
-            )
+            let nextToken = greedyToken(logits, position: position)
             if nextToken == tokenizer.endOfTextID || nextToken == tokenizer.endOfTurnID { break }
             generated.append(nextToken)
 
-            let decoded = tokenizer.decode(generated)
-            if decoded.contains("\n") || decoded.contains(".") { break }
+            if generated.count >= 5, endsFirstSentence(tokenizer.decode(generated)) { break }
             pastTokenCount += nextInputTokens.count
             nextInputTokens = [nextToken]
         }
@@ -155,60 +145,36 @@ private enum SmolLMModelRunner {
         return mask
     }
 
-    private static func sample(
-        _ logits: MLMultiArray,
-        position: Int,
-        generated: [Int],
-        temperature: Double,
-        topP: Double,
-        repetitionPenalty: Double
-    ) -> Int {
+    private static func greedyToken(_ logits: MLMultiArray, position: Int) -> Int {
         let vocabularySize = logits.shape.last?.intValue ?? 0
         guard vocabularySize > 0 else { return 0 }
-        let repeatedTokens = Set(generated)
-        var candidates: [(token: Int, logit: Double)] = []
-        candidates.reserveCapacity(vocabularySize)
+        var bestToken = 0
+        var bestLogit = -Double.infinity
         for token in 0..<vocabularySize {
-            var value = logits[[NSNumber(value: 0), NSNumber(value: position), NSNumber(value: token)]].doubleValue
-            guard value.isFinite else { continue }
-            if repeatedTokens.contains(token) {
-                value = value >= 0 ? value / repetitionPenalty : value * repetitionPenalty
+            let value = logits[[NSNumber(value: 0), NSNumber(value: position), NSNumber(value: token)]].doubleValue
+            if value.isFinite, value > bestLogit {
+                bestLogit = value
+                bestToken = token
             }
-            candidates.append((token, value / temperature))
         }
-        guard !candidates.isEmpty else { return 0 }
+        return bestToken
+    }
 
-        candidates.sort { $0.logit > $1.logit }
-        let maxLogit = candidates[0].logit
-        let weights = candidates.map { exp($0.logit - maxLogit) }
-        let totalWeight = weights.reduce(0, +)
-        guard totalWeight.isFinite, totalWeight > 0 else { return candidates[0].token }
-
-        var nucleus: [(token: Int, weight: Double)] = []
-        var cumulativeWeight = 0.0
-        for (candidate, weight) in zip(candidates, weights) {
-            nucleus.append((candidate.token, weight))
-            cumulativeWeight += weight
-            if cumulativeWeight / totalWeight >= topP { break }
-        }
-
-        let nucleusWeight = nucleus.reduce(0) { $0 + $1.weight }
-        var draw = Double.random(in: 0..<nucleusWeight)
-        for candidate in nucleus {
-            draw -= candidate.weight
-            if draw <= 0 { return candidate.token }
-        }
-        return nucleus.last?.token ?? candidates[0].token
+    private static func endsFirstSentence(_ text: String) -> Bool {
+        text.contains("\n") || text.contains(where: { ".!?".contains($0) })
     }
 
     private static func firstSentence(_ text: String) -> String {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let line = cleaned.components(separatedBy: .newlines).first ?? cleaned
-        let sentence = line.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? line
-        let words = sentence.split(whereSeparator: \.isWhitespace).prefix(15)
-        let result = words.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return "" }
+        let end = cleaned.firstIndex(where: { ".!?\n".contains($0) })
+        let sentence = end.map { String(cleaned[...$0]) } ?? cleaned
+        let result = sentence.replacingOccurrences(of: "\n", with: " ")
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !result.isEmpty else { return "" }
-        return result.hasSuffix(".") ? result : result + "."
+        return ".!?".contains(result.last ?? " ") ? result : result + "."
     }
 }
 
@@ -265,7 +231,7 @@ final class SmolLMInferenceService: ObservableObject {
     }
 
     private func telemetryFallback(from prompt: String) -> String {
-        let pattern = #"Telemetry:\s*(-?\d+)\s*kcal,\s*(-?\d+)g\s+protein\s+left"#
+        let pattern = #"Telemetry:\s*(-?\d+)\s*kcal,\s*(-?\d+)g\s+protein(?:\s+left)?"#
         guard
             let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
             let match = expression.firstMatch(in: prompt, range: NSRange(prompt.startIndex..<prompt.endIndex, in: prompt)),
@@ -422,30 +388,19 @@ private struct SmolLMTokenizer: Sendable {
     func encodePrompt(_ prompt: String, maxTokens: Int) -> [Int] {
         guard
             let userMarker = prompt.range(of: "<|im_start|>user\n"),
-            let telemetryMarker = prompt.range(of: "Telemetry:", options: .caseInsensitive, range: prompt.startIndex..<userMarker.lowerBound),
             let assistantMarker = prompt.range(of: "<|im_end|>\n<|im_start|>assistant\n", range: userMarker.upperBound..<prompt.endIndex)
-        else {
-            return Array(encode(prompt).suffix(maxTokens))
-        }
+        else { return Array(encode(prompt).prefix(maxTokens)) }
 
-        let ruleTokens = encode(String(prompt[..<telemetryMarker.lowerBound]))
-        let telemetryTokens = encode(String(prompt[telemetryMarker.lowerBound..<userMarker.lowerBound]))
+        let systemTokens = encode(String(prompt[..<userMarker.lowerBound]))
         let userHeaderTokens = encode(String(prompt[userMarker.lowerBound..<userMarker.upperBound]))
-        let queryTokens = encode(String(prompt[userMarker.upperBound..<assistantMarker.lowerBound]))
+        let userContentTokens = encode(String(prompt[userMarker.upperBound..<assistantMarker.lowerBound]))
         let assistantHeaderTokens = encode(String(prompt[assistantMarker.lowerBound...]))
+        let contentBudget = max(0, maxTokens - systemTokens.count - userHeaderTokens.count - assistantHeaderTokens.count)
 
-        // Reserve room for generated tokens within the 128-token context, then
-        // preserve all telemetry and as much of the user's query as possible.
-        let available = max(0, maxTokens - userHeaderTokens.count - assistantHeaderTokens.count)
-        let queryBudget = min(32, min(queryTokens.count, max(0, available - telemetryTokens.count)))
-        let telemetryBudget = min(telemetryTokens.count, max(0, available - queryBudget))
-        let ruleBudget = min(ruleTokens.count, max(0, available - queryBudget - telemetryBudget))
-
-        return Array((Array(ruleTokens.prefix(ruleBudget))
-            + Array(telemetryTokens.suffix(telemetryBudget))
+        return systemTokens
             + userHeaderTokens
-            + Array(queryTokens.prefix(queryBudget))
-            + assistantHeaderTokens).prefix(maxTokens))
+            + Array(userContentTokens.prefix(contentBudget))
+            + assistantHeaderTokens
     }
 
     func decode(_ ids: [Int]) -> String {
