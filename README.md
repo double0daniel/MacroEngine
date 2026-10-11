@@ -46,7 +46,14 @@ Add these repository actions secrets under **Settings → Secrets and variables 
 - `IOS_TEAM_ID`: Apple Developer team ID.
 - `KEYCHAIN_PASSWORD`: any temporary password for the workflow's build keychain.
 
-On macOS, base64-encode the `.p12` and `.mobileprovision` files with `base64 -i file -o file.base64`, then copy their contents into the matching secrets. Register the iPhone's UDID in the Apple Developer account and include it in the Ad Hoc profile before exporting the profile. After a successful workflow run, download `MacroEngine-IPA` from the run's **Artifacts** section and install the IPA using a device installation tool such as Apple Configurator.
+On Windows PowerShell, create the values for the two base64 secrets without printing them to the terminal:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\distribution.p12")) | Set-Clipboard
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\profile.mobileprovision")) | Set-Clipboard
+```
+
+Run one line at a time and paste the clipboard contents into `IOS_CERTIFICATE_BASE64` and `IOS_PROVISIONING_PROFILE_BASE64` respectively. On macOS, base64-encode the files with `base64 -i file -o file.base64` and copy their contents into the matching secrets. Register the iPhone's UDID in the Apple Developer account and include it in the Ad Hoc profile before exporting the profile. After a successful workflow run, download `MacroEngine-IPA` from the run's **Artifacts** section and install the IPA using a device installation tool such as Apple Configurator.
 
 The signing certificate and profile are private credentials. Store them only in GitHub Actions secrets; do not commit them to this repository.
 
