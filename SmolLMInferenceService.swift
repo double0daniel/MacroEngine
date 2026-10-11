@@ -12,21 +12,21 @@ enum OfflineQueryResponder {
             .replacingOccurrences(of: "’", with: "")
 
         if ["rollover", "roll over", "weekly budget", "carry over"].contains(where: { query.contains($0) }) {
-            return "Unused calories from yesterday roll over across your remaining week so you can stay on target overall!"
+            return "[Fallback] Unused calories from yesterday roll over across your remaining week so you can stay on target overall!"
         }
         if ["track", "progress", "on track", "doing today", "how am i"].contains(where: { query.contains($0) }) {
-            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left today. Focus on hitting your protein target!"
+            return "[Fallback] You have \(remainingCalories) kcal and \(remainingProtein)g protein left today. Focus on hitting your protein target!"
         }
         if ["workout", "exercise", "cardio", "gym", "burn", "burned"].contains(where: { query.contains($0) }) {
-            return "Logged workouts add burned calories back into your daily net budget to fuel your recovery properly."
+            return "[Fallback] Logged workouts add burned calories back into your daily net budget to fuel your recovery properly."
         }
         if ["pizza", "burger", "takeaway", "nandos", "mcdonalds", "junk", "cheat"].contains(where: { query.contains($0) }) {
-            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left. Enjoy it as long as it fits your calorie budget!"
+            return "[Fallback] You have \(remainingCalories) kcal and \(remainingProtein)g protein left. Enjoy it as long as it fits your calorie budget!"
         }
         if ["snack", "protein", "food", "eat", "hungry", "meal", "breakfast", "lunch", "dinner"].contains(where: { query.contains($0) }) {
-            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein remaining. Try Greek yogurt, eggs, or chicken breast!"
+            return "[Fallback] You have \(remainingCalories) kcal and \(remainingProtein)g protein remaining. Try Greek yogurt, eggs, or chicken breast!"
         }
-        return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left today. Prioritize lean protein to hit your daily goal!"
+        return "[Fallback] You have \(remainingCalories) kcal and \(remainingProtein)g protein left today. Prioritize lean protein to hit your daily goal!"
     }
 }
 
@@ -145,7 +145,7 @@ final class SmolLMInferenceService: ObservableObject {
                         userQuery: userQuery
                     )
                 } catch {
-                    print("Groq request failed; using offline coaching rules: \(error.localizedDescription)")
+                    print("⚠️ Groq API Error: \(error.localizedDescription)")
                     return nil
                 }
             }.value
