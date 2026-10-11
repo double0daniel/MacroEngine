@@ -13,7 +13,7 @@ targets:
     sources:
       - path: Assets.xcassets
         buildPhase: resources
-      - path: Models
+      - path: Models/qwen_0_5b
         buildPhase: resources
       - WidgetDataManager.swift
       - NotificationManager.swift

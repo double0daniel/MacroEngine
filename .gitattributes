@@ -1,1 +1,1 @@
-Models/smollm2_135m_instruct_only_logits.mlmodelc/weights/weight.bin filter=lfs diff=lfs merge=lfs -text
+Models/qwen_0_5b/** filter=lfs diff=lfs merge=lfs -text

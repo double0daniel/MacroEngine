@@ -67,46 +67,42 @@ private final class SmolLMInferenceRace: @unchecked Sendable {
 }
 
 private enum SmolLMModelRunner {
+    private static let maximumContextTokens = 128
     private static let maximumGenerationTokens = 40
     private static let temperature = 0.7
     private static let topP = 0.9
     private static let repetitionPenalty = 1.15
 
     static func generate(prompt: String, model: MLModel, tokenizer: SmolLMTokenizer) throws -> String? {
-        let contextLimit = 32
-        let inputTokens = tokenizer.encodePrompt(prompt, maxTokens: contextLimit)
+        guard #available(iOS 18.0, *) else { return nil }
+        let inputTokens = tokenizer.encodePrompt(
+            prompt,
+            maxTokens: maximumContextTokens - maximumGenerationTokens
+        )
         guard !inputTokens.isEmpty else { return nil }
-        let boundedInputTokens = Array(inputTokens.suffix(contextLimit))
 
+        let state = model.makeState()
+        var nextInputTokens = inputTokens
+        var pastTokenCount = 0
         var generated: [Int] = []
         for _ in 0..<maximumGenerationTokens {
             guard !Task.isCancelled else { return nil }
-            let context = Array((boundedInputTokens + generated).suffix(contextLimit))
-            let paddedTokens = context + Array(repeating: 0, count: contextLimit - context.count)
-            let ids = try MLMultiArray(
-                shape: [NSNumber(value: 1), NSNumber(value: contextLimit)],
-                dataType: .int32
+            guard pastTokenCount + nextInputTokens.count <= maximumContextTokens else { break }
+            let ids = try tokenArray(nextInputTokens)
+            let mask = try causalMask(
+                pastTokenCount: pastTokenCount,
+                inputTokenCount: nextInputTokens.count
             )
-            let mask = try MLMultiArray(
-                shape: [NSNumber(value: 1), NSNumber(value: contextLimit)],
-                dataType: .int32
-            )
-
-            for (index, token) in paddedTokens.enumerated() {
-                let position = [NSNumber(value: 0), NSNumber(value: index)]
-                ids[position] = NSNumber(value: token)
-                mask[position] = index < context.count ? 1 : 0
-            }
 
             let provider = try MLDictionaryFeatureProvider(dictionary: [
                 "input_ids": ids,
-                "attention_mask": mask
+                "causal_mask": mask
             ])
-            let output = try model.prediction(from: provider)
+            let output = try model.prediction(from: provider, using: state)
             guard !Task.isCancelled else { return nil }
             guard let logits = output.featureValue(for: "logits")?.multiArrayValue else { return nil }
 
-            let position = context.count - 1
+            let position = nextInputTokens.count - 1
             let nextToken = sample(
                 logits,
                 position: position,
@@ -120,11 +116,43 @@ private enum SmolLMModelRunner {
 
             let decoded = tokenizer.decode(generated)
             if decoded.contains("\n") || decoded.contains(".") { break }
+            pastTokenCount += nextInputTokens.count
+            nextInputTokens = [nextToken]
         }
 
         let answer = firstSentence(tokenizer.decode(generated))
         guard !answer.isEmpty, answer.count <= 600 else { return nil }
         return answer
+    }
+
+    private static func tokenArray(_ tokens: [Int]) throws -> MLMultiArray {
+        let array = try MLMultiArray(
+            shape: [NSNumber(value: 1), NSNumber(value: tokens.count)],
+            dataType: .int32
+        )
+        for (index, token) in tokens.enumerated() {
+            array[[NSNumber(value: 0), NSNumber(value: index)]] = NSNumber(value: token)
+        }
+        return array
+    }
+
+    private static func causalMask(pastTokenCount: Int, inputTokenCount: Int) throws -> MLMultiArray {
+        let totalTokenCount = pastTokenCount + inputTokenCount
+        let mask = try MLMultiArray(
+            shape: [
+                NSNumber(value: 1), NSNumber(value: 1),
+                NSNumber(value: inputTokenCount), NSNumber(value: totalTokenCount)
+            ],
+            dataType: .float16
+        )
+        for queryIndex in 0..<inputTokenCount {
+            for keyIndex in 0..<totalTokenCount {
+                let isFutureToken = keyIndex > pastTokenCount + queryIndex
+                let value = isFutureToken ? -65_504.0 : 0.0
+                mask[[NSNumber(value: 0), NSNumber(value: 0), NSNumber(value: queryIndex), NSNumber(value: keyIndex)]] = NSNumber(value: value)
+            }
+        }
+        return mask
     }
 
     private static func sample(
@@ -184,7 +212,7 @@ private enum SmolLMModelRunner {
     }
 }
 
-/// Small on-device runner for the bundled, fixed-context SmolLM Core ML model.
+/// On-device runner for the bundled Qwen 2.5 0.5B Core ML model.
 /// The model and tokenizer are loaded off the main thread. Calls wait for an
 /// in-progress model load before attempting inference.
 @MainActor
@@ -202,8 +230,9 @@ final class SmolLMInferenceService: ObservableObject {
         }
     }
 
-    /// Runs greedy autoregressive prediction away from the main thread.
-    /// The shipped Core ML graph has a fixed 32-token input and logits output.
+    /// Runs sampled autoregressive prediction away from the main thread.
+    /// The Qwen graph accepts sequences up to 2,048 tokens; this service caps
+    /// each prompt plus response at 128 tokens.
     func generateResponse(prompt: String) async -> String {
         let fallback = telemetryFallback(from: prompt)
         guard let loadedAssets = await loadAssetsIfNeeded() else { return fallback }
@@ -236,7 +265,7 @@ final class SmolLMInferenceService: ObservableObject {
     }
 
     private func telemetryFallback(from prompt: String) -> String {
-        let pattern = #"Rem:\s*(-?\d+)\s*kcal,\s*(-?\d+)g\s+protein"#
+        let pattern = #"Telemetry:\s*(-?\d+)\s*kcal,\s*(-?\d+)g\s+protein\s+left"#
         guard
             let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
             let match = expression.firstMatch(in: prompt, range: NSRange(prompt.startIndex..<prompt.endIndex, in: prompt)),
@@ -260,19 +289,15 @@ final class SmolLMInferenceService: ObservableObject {
         let task = Task.detached(priority: .utility) { () -> SmolLMLoadedAssets? in
             guard
                 let modelURL = Bundle.main.url(
-                    forResource: "smollm2_135m_instruct_only_logits",
+                    forResource: "Qwen2.5-0.5B-Instruct-4bit",
                     withExtension: "mlmodelc",
-                    subdirectory: "Models"
-                ) ?? Bundle.main.url(forResource: "smollm2_135m_instruct_only_logits", withExtension: "mlmodelc"),
+                    subdirectory: "Models/qwen_0_5b"
+                ) ?? Bundle.main.url(forResource: "Qwen2.5-0.5B-Instruct-4bit", withExtension: "mlmodelc"),
                 let tokenizerURL = Bundle.main.url(
                     forResource: "tokenizer",
                     withExtension: "json",
-                    subdirectory: "Models/tokenizer"
-                ) ?? Bundle.main.url(
-                    forResource: "smollm2_135m_instruct_tokenizer",
-                    withExtension: "json",
-                    subdirectory: "Models"
-                ) ?? Bundle.main.url(forResource: "smollm2_135m_instruct_tokenizer", withExtension: "json"),
+                    subdirectory: "Models/qwen_0_5b"
+                ) ?? Bundle.main.url(forResource: "tokenizer", withExtension: "json"),
                 let tokenizer = try? SmolLMTokenizer(contentsOf: tokenizerURL)
             else { return nil }
 
@@ -295,7 +320,7 @@ final class SmolLMInferenceService: ObservableObject {
 
 }
 
-/// Minimal Hugging Face GPT-2 byte-level BPE tokenizer for the bundled SmolLM vocabulary.
+/// Minimal Hugging Face byte-level BPE tokenizer for the bundled Qwen vocabulary.
 private struct SmolLMTokenizer: Sendable {
     private struct File: Decodable {
         struct Model: Decodable {
@@ -383,7 +408,7 @@ private struct SmolLMTokenizer: Sendable {
     }
 
     private func encodeOrdinary(_ text: String) -> [Int] {
-        let pattern = #"(?i:'s|'t|'re|'ve|'m|'ll|'d)| ?\p{L}+| ?\p{N}| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"#
+        let pattern = #"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"#
         guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         let pieces = expression.matches(in: text, range: range).compactMap { Range($0.range, in: text).map { String(text[$0]) } }
@@ -409,12 +434,11 @@ private struct SmolLMTokenizer: Sendable {
         let queryTokens = encode(String(prompt[userMarker.upperBound..<assistantMarker.lowerBound]))
         let assistantHeaderTokens = encode(String(prompt[assistantMarker.lowerBound...]))
 
-        // The source prompt retains the full ChatML rules. For this fixed 32-token
-        // graph, prioritize the live telemetry and query while retaining the
-        // opening rules and all required ChatML role boundaries where possible.
+        // Reserve room for generated tokens within the 128-token context, then
+        // preserve all telemetry and as much of the user's query as possible.
         let available = max(0, maxTokens - userHeaderTokens.count - assistantHeaderTokens.count)
-        let queryBudget = min(12, min(queryTokens.count, max(0, available - min(10, telemetryTokens.count))))
-        let telemetryBudget = min(10, min(telemetryTokens.count, max(0, available - queryBudget)))
+        let queryBudget = min(32, min(queryTokens.count, max(0, available - telemetryTokens.count)))
+        let telemetryBudget = min(telemetryTokens.count, max(0, available - queryBudget))
         let ruleBudget = min(ruleTokens.count, max(0, available - queryBudget - telemetryBudget))
 
         return Array((Array(ruleTokens.prefix(ruleBudget))

@@ -18,11 +18,7 @@ enum LocalAIEngine {
         let foodFits = remainingCalories >= 400
         let prompt = """
         <|im_start|>system
-        You are MacroEngine's concise UK fitness mascot.
-        Rules:
-        - Answer in 1 short sentence (max 15 words).
-        - Never repeat the prompt, stats, or previous words.
-        - Be direct, conversational, and encouraging.
+        You are MacroEngine's UK fitness mascot. Keep answers short (max 15 words).
         Telemetry: \(remainingCalories) kcal, \(proteinRemainingGrams)g protein left. Fits budget: \(foodFits ? "Yes" : "No").<|im_end|>
         <|im_start|>user
         \(query)<|im_end|>
