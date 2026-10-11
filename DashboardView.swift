@@ -302,6 +302,7 @@ struct TelemetryView: View {
                             .foregroundStyle(Slate.textSecondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    WeeklyPaceTrajectoryCard()
                     WeightTelemetryCard()
                     BodyMeasurementsCard()
                     TrainingJournalCard()
@@ -316,6 +317,177 @@ struct TelemetryView: View {
             .toolbar(.hidden, for: .navigationBar)
         }
         .preferredColorScheme(.dark)
+    }
+}
+
+/// Compares this week's logged food intake with estimated maintenance calories
+/// across the days on which the user has logged food.
+private struct WeeklyPaceTrajectoryCard: View {
+    @Environment(DiaryStore.self) private var diary
+
+    private var weeklyEntries: [DiaryEntry] {
+        let calendar = Calendar.current
+        guard let interval = calendar.dateInterval(of: .weekOfYear, for: .now) else { return [] }
+        return diary.entries.filter { interval.contains($0.date) }
+    }
+
+    private var loggedDays: Int {
+        Set(weeklyEntries.map { Calendar.current.startOfDay(for: $0.date) }).count
+    }
+
+    private var caloriesConsumed: Double {
+        weeklyEntries.reduce(0) { $0 + $1.macros.calories }
+    }
+
+    private var dailyTDEE: Double {
+        guard let profile = diary.profile else { return diary.goals.calories }
+        return MacroTargetCalculator.estimate(for: profile).tdee
+    }
+
+    private var weeklyDelta: Double {
+        caloriesConsumed - (dailyTDEE * Double(loggedDays))
+    }
+
+    private var projectedKgChange: Double { weeklyDelta / 7_700.0 }
+
+    private var goal: PrimaryGoal { diary.profile?.goal.primaryGoal ?? .maingain }
+
+    private var markerColor: Color {
+        switch goal {
+        case .cutting:
+            abs(projectedKgChange) > 1 && projectedKgChange < 0 ? .red : Accent.fat
+        case .bulking:
+            (0.2...0.4).contains(projectedKgChange) ? Accent.calories : Slate.textSecondary
+        case .maingain:
+            abs(projectedKgChange) <= 0.05 ? Accent.fat : Accent.calories
+        }
+    }
+
+    private var goalStatus: String {
+        switch goal {
+        case .cutting:
+            String(format: "Pacing for %+.2f kg this week", projectedKgChange)
+        case .bulking:
+            String(format: "Pacing for %+.2f kg this week", projectedKgChange)
+        case .maingain:
+            "Maintenance Trajectory (±0.05 kg)"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: "chart.xyaxis.line")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Accent.calories)
+                    .frame(width: 36, height: 36)
+                    .background(Slate.surfaceRaised, in: RoundedRectangle(cornerRadius: 11))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Weekly Pace & Trajectory")
+                        .font(.meHeadline)
+                        .foregroundStyle(Slate.textPrimary)
+                    Text("Estimated from your logged days")
+                        .font(.meCaption)
+                        .foregroundStyle(Slate.textSecondary)
+                }
+                Spacer(minLength: 0)
+            }
+
+            HStack(alignment: .center, spacing: 8) {
+                Text(goalStatus)
+                    .font(.meBody.weight(.semibold))
+                    .foregroundStyle(markerColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                Text(goal.title)
+                    .font(.meCaption)
+                    .foregroundStyle(Slate.textPrimary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Slate.surfaceRaised, in: Capsule())
+            }
+
+            WeeklyPaceGauge(value: projectedKgChange, color: markerColor)
+                .frame(height: 24)
+
+            HStack(alignment: .firstTextBaseline) {
+                Text("Deficit")
+                Spacer()
+                Text("0")
+                Spacer()
+                Text("Surplus")
+            }
+            .font(.meCaption)
+            .foregroundStyle(Slate.textTertiary)
+
+            HStack(spacing: 0) {
+                metric(title: "Food logged", value: "\(caloriesConsumed.whole) kcal")
+                Spacer(minLength: 8)
+                metric(title: "Maintenance", value: "\((dailyTDEE * Double(loggedDays)).whole) kcal")
+                Spacer(minLength: 8)
+                metric(title: "Days logged", value: "\(loggedDays)")
+            }
+
+            if loggedDays == 0 {
+                Text("Log a meal to start building this week’s estimate.")
+                    .font(.meCaption)
+                    .foregroundStyle(Slate.textSecondary)
+            } else {
+                Text(String(format: "Weekly energy balance: %+.0f kcal · projected change: %+.2f kg", weeklyDelta, projectedKgChange))
+                    .font(.meCaption)
+                    .foregroundStyle(Slate.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .card(padding: 18)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func metric(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.meCaption)
+                .foregroundStyle(Slate.textTertiary)
+            Text(value)
+                .font(.meNumber)
+                .foregroundStyle(Slate.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+    }
+}
+
+private struct WeeklyPaceGauge: View {
+    let value: Double
+    let color: Color
+
+    // One kilogram of projected change maps to either end of the gauge.
+    private var normalizedValue: CGFloat {
+        guard value.isFinite else { return 0.5 }
+        return CGFloat(min(1, max(-1, value))) * 0.5 + 0.5
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            ZStack(alignment: .leading) {
+                Capsule().fill(Slate.track)
+                Rectangle()
+                    .fill(Slate.stroke)
+                    .frame(width: 2, height: 18)
+                    .position(x: width / 2, y: 12)
+                Circle()
+                    .fill(color)
+                    .frame(width: 16, height: 16)
+                    .overlay(Circle().strokeBorder(Slate.surface, lineWidth: 2))
+                    .position(x: min(width - 8, max(8, normalizedValue * width)), y: 12)
+                    .shadow(color: color.opacity(0.35), radius: 5)
+            }
+        }
+        .accessibilityElement()
+        .accessibilityLabel("Weekly calorie pace")
+        .accessibilityValue(String(format: "%+.2f kilograms projected", value))
     }
 }
 
