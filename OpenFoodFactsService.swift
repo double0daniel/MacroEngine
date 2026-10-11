@@ -14,34 +14,97 @@ enum FoodServiceError: LocalizedError {
     }
 }
 
+enum FoodAPIStatus: String, Equatable, Sendable {
+    case liveUK
+    case liveGlobal
+    case liveNoMatch
+    case offlineCache
+    case unavailable
+
+    var title: String {
+        switch self {
+        case .liveUK: "Live · UK Open Food Facts"
+        case .liveGlobal: "Live · global fallback"
+        case .liveNoMatch: "Live · barcode not found"
+        case .offlineCache: "Offline · cached result"
+        case .unavailable: "Offline · no cached result"
+        }
+    }
+
+    var isLive: Bool { self == .liveUK || self == .liveGlobal || self == .liveNoMatch }
+}
+
+struct FoodSearchResult: Sendable {
+    let foods: [FoodItem]
+    let status: FoodAPIStatus
+}
+
+struct FoodLookupResult: Sendable {
+    let food: FoodItem
+    let status: FoodAPIStatus
+}
+
 struct OpenFoodFactsService: Sendable {
     static let shared = OpenFoodFactsService()
 
-    private let base = "https://world.openfoodfacts.org"
+    private let ukBase = "https://uk.openfoodfacts.org"
+    private let globalBase = "https://world.openfoodfacts.org"
+    private let session: URLSession
     private static let fields = "code,product_name,brands,nutriments,serving_quantity,image_small_url"
+
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
 
     // MARK: Public API
 
     func search(_ query: String, page: Int = 1) async throws -> [FoodItem] {
-        // Prefer products tagged as sold in the United Kingdom, then fall back to the
-        // full Open Food Facts catalogue so untagged products are still discoverable.
+        try await searchWithStatus(query, page: page).foods
+    }
+
+    func searchWithStatus(_ query: String, page: Int = 1) async throws -> FoodSearchResult {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return FoodSearchResult(foods: [], status: .liveUK) }
+        var ukError: Error?
+
         do {
-            let ukResponse: SearchResponse = try await fetch(searchURL(query, page: page, ukOnly: true))
+            let ukResponse: SearchResponse = try await fetch(ukSearchURL(query, page: page))
             let ukItems = uniqueFoods(from: ukResponse.products)
-            if !ukItems.isEmpty { return ukItems }
+            if !ukItems.isEmpty {
+                cache(ukItems, key: searchCacheKey(normalized))
+                return FoodSearchResult(foods: ukItems, status: .liveUK)
+            }
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as URLError where error.code == .cancelled {
             throw error
         } catch {
-            // Some catalogue responses may not support the country filter; use global search.
+            ukError = error
         }
 
-        let globalResponse: SearchResponse = try await fetch(searchURL(query, page: page, ukOnly: false))
-        return uniqueFoods(from: globalResponse.products)
+        do {
+            let globalResponse: SearchResponse = try await fetch(searchURL(query, page: page, base: globalBase, ukOnly: false))
+            let items = uniqueFoods(from: globalResponse.products)
+            cache(items, key: searchCacheKey(normalized))
+            return FoodSearchResult(foods: items, status: .liveGlobal)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw error
+        } catch {
+            if let cached = cached([FoodItem].self, key: searchCacheKey(normalized)) {
+                return FoodSearchResult(foods: cached, status: .offlineCache)
+            }
+            throw ukError ?? error
+        }
     }
 
-    private func searchURL(_ query: String, page: Int, ukOnly: Bool) -> URL? {
+    /// Full-text product search remains on OFF's keyword-search endpoint, hosted on the UK domain first.
+    func ukSearchURL(_ query: String, page: Int = 1) -> URL? {
+        searchURL(query, page: page, base: ukBase, ukOnly: true)
+    }
+
+    private func searchURL(_ query: String, page: Int, base: String, ukOnly: Bool) -> URL? {
         guard var components = URLComponents(string: "\(base)/cgi/search.pl") else { return nil }
         var queryItems = [
             URLQueryItem(name: "search_terms", value: query),
@@ -67,22 +130,61 @@ struct OpenFoodFactsService: Sendable {
     }
 
     func product(barcode: String) async throws -> FoodItem {
+        try await productWithStatus(barcode: barcode).food
+    }
+
+    func productWithStatus(barcode: String) async throws -> FoodLookupResult {
         let code = barcode.filter(\.isNumber)
-        guard !code.isEmpty,
-              var components = URLComponents(string: "\(base)/api/v2/product/\(code).json") else {
-            throw FoodServiceError.invalidURL
-        }
-        components.queryItems = [.init(name: "fields", value: Self.fields)]
+        guard let productURL = ukProductURL(code), !code.isEmpty else { throw FoodServiceError.invalidURL }
 
         do {
-            let response: ProductResponse = try await fetch(components.url)
+            let response: ProductResponse = try await fetch(productURL)
             guard response.status == 1, let item = response.product?.foodItem else {
                 throw FoodServiceError.notFound
             }
-            return item
+            cache(item, key: productCacheKey(code))
+            return FoodLookupResult(food: item, status: .liveUK)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw error
+        } catch FoodServiceError.notFound {
+            throw FoodServiceError.notFound
         } catch FoodServiceError.badStatus(404) {
             throw FoodServiceError.notFound
+        } catch {
+            if let cached = cached(FoodItem.self, key: productCacheKey(code)) {
+                return FoodLookupResult(food: cached, status: .offlineCache)
+            }
+            throw error
         }
+    }
+
+    func ukProductURL(_ barcode: String) -> URL? {
+        let code = barcode.filter(\.isNumber)
+        guard !code.isEmpty, var components = URLComponents(string: "\(ukBase)/api/v2/product/\(code).json") else {
+            return nil
+        }
+        components.queryItems = [.init(name: "fields", value: Self.fields)]
+        return components.url
+    }
+
+    private func searchCacheKey(_ query: String) -> String {
+        "macroengine.offline.search.\(query.lowercased())"
+    }
+
+    private func productCacheKey(_ barcode: String) -> String {
+        "macroengine.offline.product.\(barcode)"
+    }
+
+    private func cache<T: Encodable>(_ value: T, key: String) {
+        guard let data = try? JSONEncoder().encode(value) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+
+    private func cached<T: Decodable>(_ type: T.Type, key: String) -> T? {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
     }
 
     // MARK: Networking
@@ -93,7 +195,7 @@ struct OpenFoodFactsService: Sendable {
         // Open Food Facts asks apps to identify themselves.
         request.setValue("MacroEngine/1.0 (iOS)", forHTTPHeaderField: "User-Agent")
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw FoodServiceError.badStatus(http.statusCode)
         }

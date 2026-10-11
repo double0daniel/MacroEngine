@@ -359,6 +359,40 @@ struct WeightEntry: Identifiable, Codable, Hashable, Sendable {
     var weightKg: Double
 }
 
+struct WorkoutEntry: Identifiable, Codable, Hashable, Sendable {
+    var id: UUID = UUID()
+    var date: Date = .now
+    var type: String
+    var durationMinutes: Int
+    var notes: String
+    var caloriesBurned: Int
+}
+
+struct HydrationEntry: Identifiable, Codable, Hashable, Sendable {
+    var id: UUID = UUID()
+    var date: Date = .now
+    var amountMl: Int = 0
+}
+
+struct SupplementDay: Codable, Hashable, Sendable {
+    var date: Date = .now
+    var completedIDs: [String] = []
+}
+
+struct SupplementItem: Identifiable, Hashable, Sendable {
+    let id: String
+    let name: String
+    let symbol: String
+
+    static let defaults: [SupplementItem] = [
+        .init(id: "creatine", name: "Creatine", symbol: "bolt.fill"),
+        .init(id: "electrolytes", name: "Electrolytes", symbol: "drop.fill"),
+        .init(id: "fish-oil", name: "Fish Oil", symbol: "fish.fill"),
+        .init(id: "multivitamin", name: "Multivitamin", symbol: "pills.fill"),
+        .init(id: "vitamin-d", name: "Vitamin D", symbol: "sun.max.fill")
+    ]
+}
+
 // MARK: - App store
 
 @MainActor
@@ -371,6 +405,10 @@ final class DiaryStore {
     var favoriteFoods: [FoodItem] = []
     var customMeals: [CustomMeal] = []
     var weightEntries: [WeightEntry] = []
+    var workouts: [WorkoutEntry] = []
+    var hydrationEntries: [HydrationEntry] = []
+    var waterGoalMl = 2000
+    var supplementDays: [SupplementDay] = []
 
     private let persist: Bool
     private enum Key {
@@ -381,6 +419,10 @@ final class DiaryStore {
         static let favorites = "macroengine.favorites.v1"
         static let customMeals = "macroengine.customMeals.v1"
         static let weightEntries = "macroengine.weightEntries.v1"
+        static let workouts = "macroengine.workouts.v1"
+        static let hydrationEntries = "macroengine.hydration.v1"
+        static let waterGoal = "macroengine.waterGoal.v1"
+        static let supplementDays = "macroengine.supplements.v1"
     }
 
     init(persist: Bool = true) {
@@ -397,6 +439,22 @@ final class DiaryStore {
 
     var totals: Macros {
         todaysEntries.reduce(.zero) { $0 + $1.macros }
+    }
+
+    var todaysWorkouts: [WorkoutEntry] {
+        workouts.filter { Calendar.current.isDateInToday($0.date) }.sorted { $0.date > $1.date }
+    }
+
+    var caloriesBurnedToday: Int { todaysWorkouts.reduce(0) { $0 + max(0, $1.caloriesBurned) } }
+
+    var netCaloriesToday: Double { totals.calories - Double(caloriesBurnedToday) }
+
+    var waterConsumedTodayMl: Int {
+        hydrationEntries.first(where: { Calendar.current.isDateInToday($0.date) })?.amountMl ?? 0
+    }
+
+    var todaysSupplementIDs: Set<String> {
+        Set(supplementDays.first(where: { Calendar.current.isDateInToday($0.date) })?.completedIDs ?? [])
     }
 
     func entries(for category: MealCategory) -> [DiaryEntry] {
@@ -424,6 +482,49 @@ final class DiaryStore {
         save(entries, key: Key.entries)
     }
 
+    func addWorkout(type: String, durationMinutes: Int, notes: String, caloriesBurned: Int, date: Date = .now) {
+        let cleanType = type.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanType.isEmpty, durationMinutes > 0, caloriesBurned >= 0 else { return }
+        workouts.append(WorkoutEntry(date: date, type: cleanType, durationMinutes: durationMinutes,
+                                     notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
+                                     caloriesBurned: caloriesBurned))
+        save(workouts, key: Key.workouts)
+    }
+
+    func removeWorkout(_ workout: WorkoutEntry) {
+        workouts.removeAll { $0.id == workout.id }
+        save(workouts, key: Key.workouts)
+    }
+
+    func addWater(_ amountMl: Int, date: Date = .now) {
+        guard amountMl > 0 else { return }
+        if let index = hydrationEntries.firstIndex(where: { Calendar.current.isDate($0.date, inSameDayAs: date) }) {
+            hydrationEntries[index].amountMl += amountMl
+        } else {
+            hydrationEntries.append(HydrationEntry(date: date, amountMl: amountMl))
+        }
+        save(hydrationEntries, key: Key.hydrationEntries)
+    }
+
+    func setWaterGoal(_ amountMl: Int) {
+        waterGoalMl = min(10_000, max(250, amountMl))
+        if persist { UserDefaults.standard.set(waterGoalMl, forKey: Key.waterGoal) }
+    }
+
+    func toggleSupplement(_ id: String, date: Date = .now) {
+        let calendar = Calendar.current
+        if let index = supplementDays.firstIndex(where: { calendar.isDate($0.date, inSameDayAs: date) }) {
+            if supplementDays[index].completedIDs.contains(id) {
+                supplementDays[index].completedIDs.removeAll { $0 == id }
+            } else {
+                supplementDays[index].completedIDs.append(id)
+            }
+        } else {
+            supplementDays.append(SupplementDay(date: date, completedIDs: [id]))
+        }
+        save(supplementDays, key: Key.supplementDays)
+    }
+
     func finishOnboarding(profile: UserProfile, goals: Macros) {
         self.profile = profile
         self.goals = Macros(
@@ -449,6 +550,15 @@ final class DiaryStore {
             fat: max(0, newGoals.fat)
         )
         save(goals, key: Key.goals)
+    }
+
+    func updateProfileAndGoals(_ newProfile: UserProfile, goals newGoals: Macros) {
+        let weightChanged = profile?.weightKg != newProfile.weightKg
+        profile = newProfile
+        save(newProfile, key: Key.profile)
+        updateGoals(newGoals)
+        if weightChanged { recordWeight(newProfile.weightKg) }
+        if persist { UserDefaults.standard.set(true, forKey: Key.onboarding) }
     }
 
     func isFavorite(_ food: FoodItem) -> Bool {
@@ -513,6 +623,10 @@ final class DiaryStore {
         favoriteFoods = decode([FoodItem].self, key: Key.favorites) ?? []
         customMeals = decode([CustomMeal].self, key: Key.customMeals) ?? []
         weightEntries = decode([WeightEntry].self, key: Key.weightEntries) ?? []
+        workouts = decode([WorkoutEntry].self, key: Key.workouts) ?? []
+        hydrationEntries = decode([HydrationEntry].self, key: Key.hydrationEntries) ?? []
+        waterGoalMl = UserDefaults.standard.object(forKey: Key.waterGoal) as? Int ?? waterGoalMl
+        supplementDays = decode([SupplementDay].self, key: Key.supplementDays) ?? []
     }
 }
 

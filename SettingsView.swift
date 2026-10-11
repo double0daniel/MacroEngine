@@ -1,0 +1,230 @@
+import SwiftUI
+
+struct SettingsView: View {
+    @Environment(DiaryStore.self) private var diary
+    @State private var goal: PrimaryGoal = .cutting
+    @State private var activity: ActivityLevel = .moderatelyActive
+    @State private var weightKg = "70"
+    @State private var protein = "140"
+    @State private var carbs = "200"
+    @State private var fat = "65"
+    @State private var saved = false
+
+    private var baseProfile: UserProfile {
+        diary.profile ?? UserProfile(age: 30, sex: .preferNotToSay, heightCm: 170,
+                                     weightKg: 70, activityLevel: .moderatelyActive, goal: .maingain)
+    }
+
+    private var draftProfile: UserProfile {
+        let enteredWeight = Double(weightKg) ?? baseProfile.weightKg
+        let selectedApproach: GoalApproach
+        switch goal {
+        case .cutting:
+            selectedApproach = baseProfile.goal.primaryGoal == .cutting ? baseProfile.goal : .fatLoss
+        case .bulking:
+            selectedApproach = baseProfile.goal.primaryGoal == .bulking ? baseProfile.goal : .leanBulk
+        case .maingain:
+            selectedApproach = .maingain
+        }
+        return UserProfile(age: baseProfile.age, sex: baseProfile.sex, heightCm: baseProfile.heightCm,
+                           weightKg: min(500, max(20, enteredWeight)),
+                           activityLevel: activity, goal: selectedApproach,
+                           createdAt: baseProfile.createdAt)
+    }
+
+    private var estimate: TargetEstimate { MacroTargetCalculator.estimate(for: draftProfile) }
+
+    private var manualMacros: Macros {
+        let proteinGrams = max(0, Double(protein) ?? 0)
+        let carbGrams = max(0, Double(carbs) ?? 0)
+        let fatGrams = max(0, Double(fat) ?? 0)
+        return Macros(calories: proteinGrams * 4 + carbGrams * 4 + fatGrams * 9,
+                      protein: proteinGrams, carbs: carbGrams, fat: fatGrams)
+    }
+
+    private var validManualMacros: Bool {
+        [protein, carbs, fat].allSatisfy { Double($0).map { $0 >= 0 && $0.isFinite } ?? false }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    goalCard
+                    macroCard
+                    note
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
+            }
+            .scrollIndicators(.hidden)
+            .slateScreen()
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(Slate.background, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .onAppear(perform: loadCurrentSettings)
+            .onChange(of: goal) { _, _ in saved = false }
+            .onChange(of: activity) { _, _ in saved = false }
+            .onChange(of: weightKg) { _, _ in saved = false }
+            .onChange(of: protein) { _, _ in saved = false }
+            .onChange(of: carbs) { _, _ in saved = false }
+            .onChange(of: fat) { _, _ in saved = false }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private var goalCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Daily goal", systemImage: "target")
+                .font(.meHeadline)
+                .foregroundStyle(Slate.textPrimary)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Focus")
+                    .font(.meCaption)
+                    .foregroundStyle(Slate.textSecondary)
+                Picker("Goal", selection: $goal) {
+                    ForEach(PrimaryGoal.allCases) { option in Text(option.title).tag(option) }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Activity")
+                        .font(.meCaption)
+                        .foregroundStyle(Slate.textSecondary)
+                    Picker("Activity level", selection: $activity) {
+                        ForEach(ActivityLevel.allCases) { option in Text(option.title).tag(option) }
+                    }
+                    .tint(Slate.textPrimary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Weight (kg)")
+                        .font(.meCaption)
+                        .foregroundStyle(Slate.textSecondary)
+                    TextField("70", text: $weightKg)
+                        .keyboardType(.decimalPad)
+                        .settingsInput()
+                }
+                .frame(width: 100)
+            }
+
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Estimated TDEE")
+                        .font(.meCaption)
+                        .foregroundStyle(Slate.textSecondary)
+                    Text("\(estimate.tdee.whole) kcal / day")
+                        .font(.meNumber)
+                        .foregroundStyle(Slate.textPrimary)
+                }
+                Spacer()
+                Button("Recalculate") { recalculateMacros() }
+                    .font(.meCaption.weight(.semibold))
+                    .foregroundStyle(Slate.textPrimary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Slate.surfaceRaised, in: Capsule())
+            }
+
+            Text("Estimated daily target: \(estimate.targetCalories.whole) kcal")
+                .font(.meCaption)
+                .foregroundStyle(Slate.textTertiary)
+        }
+        .card()
+    }
+
+    private var macroCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Exact macro targets", systemImage: "slider.horizontal.3")
+                .font(.meHeadline)
+                .foregroundStyle(Slate.textPrimary)
+            Text("Calories update from your macro grams: 4 kcal/g protein, 4 kcal/g carbs and 9 kcal/g fat.")
+                .font(.meCaption)
+                .foregroundStyle(Slate.textSecondary)
+
+            HStack(spacing: 10) {
+                macroField("Protein", text: $protein, color: Accent.protein)
+                macroField("Carbs", text: $carbs, color: Accent.carbs)
+                macroField("Fat", text: $fat, color: Accent.fat)
+            }
+
+            HStack {
+                Text("Target calories")
+                    .font(.meBody)
+                    .foregroundStyle(Slate.textSecondary)
+                Spacer()
+                Text("\(manualMacros.calories.whole) kcal")
+                    .font(.meNumber)
+                    .foregroundStyle(Slate.textPrimary)
+            }
+
+            Button {
+                diary.updateProfileAndGoals(draftProfile, goals: manualMacros)
+                saved = true
+            } label: {
+                Text(saved ? "Settings saved" : "Save settings")
+            }
+            .buttonStyle(.primary)
+            .disabled(!validManualMacros)
+        }
+        .card()
+    }
+
+    private var note: some View {
+        Text("Targets are estimates that you can adjust to suit your needs. They are not medical advice.")
+            .font(.meCaption)
+            .foregroundStyle(Slate.textTertiary)
+            .padding(.horizontal, 4)
+    }
+
+    private func macroField(_ title: String, text: Binding<String>, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.meCaption)
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            TextField("0", text: text)
+                .keyboardType(.numberPad)
+                .settingsInput()
+            Text("grams")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Slate.textTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func loadCurrentSettings() {
+        guard let profile = diary.profile else { return }
+        goal = profile.goal.primaryGoal
+        activity = profile.activityLevel
+        weightKg = String(format: "%.1f", profile.weightKg)
+        protein = String(diary.goals.protein.whole)
+        carbs = String(diary.goals.carbs.whole)
+        fat = String(diary.goals.fat.whole)
+    }
+
+    private func recalculateMacros() {
+        let values = estimate.macros
+        protein = String(values.protein.whole)
+        carbs = String(values.carbs.whole)
+        fat = String(values.fat.whole)
+        saved = false
+    }
+}
+
+private extension View {
+    func settingsInput() -> some View {
+        self
+            .font(.meNumber)
+            .foregroundStyle(Slate.textPrimary)
+            .padding(11)
+            .background(Slate.surfaceRaised, in: RoundedRectangle(cornerRadius: 11))
+    }
+}

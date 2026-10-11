@@ -10,9 +10,13 @@ struct DashboardView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     header
-                    CalorieSummaryCard(eaten: diary.totals.calories, goal: diary.goals.calories)
+                    CalorieSummaryCard(eaten: diary.totals.calories, burned: diary.caloriesBurnedToday,
+                                       goal: diary.goals.calories)
                     MacroSegmentSummaryCard(totals: diary.totals, goals: diary.goals)
                     MacroBreakdownCard(totals: diary.totals, goals: diary.goals)
+                    WorkoutJournalCard()
+                    WaterTrackerCard()
+                    SupplementTrackerCard()
                     DiarySection(
                         entries: diary.todaysEntries,
                         onDelete: { diary.remove($0) },
@@ -84,10 +88,12 @@ private extension GoalApproach {
 
 struct CalorieSummaryCard: View {
     let eaten: Double
+    var burned: Int = 0
     let goal: Double
 
-    private var remaining: Double { goal - eaten }
-    private var progress: Double { goal > 0 ? eaten / goal : 0 }
+    private var net: Double { eaten - Double(max(0, burned)) }
+    private var remaining: Double { goal - net }
+    private var progress: Double { goal > 0 ? net / goal : 0 }
 
     var body: some View {
         VStack(spacing: 22) {
@@ -106,6 +112,8 @@ struct CalorieSummaryCard: View {
             HStack(spacing: 0) {
                 stat(title: "Eaten", value: eaten.whole, symbol: "flame.fill", tinted: true)
                 Rectangle().fill(Slate.stroke).frame(width: 1, height: 32)
+                stat(title: "Burned", value: max(0, burned), symbol: "figure.run", tinted: false)
+                Rectangle().fill(Slate.stroke).frame(width: 1, height: 32)
                 stat(title: "Goal", value: goal.whole, symbol: "target", tinted: false)
             }
         }
@@ -113,7 +121,7 @@ struct CalorieSummaryCard: View {
         .card(padding: 24)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Calories")
-        .accessibilityValue("\(eaten.whole) eaten of \(goal.whole). \(abs(remaining).whole) \(remaining >= 0 ? "left" : "over").")
+        .accessibilityValue("\(eaten.whole) eaten, \(max(0, burned)) burned, net \(net.whole) of \(goal.whole). \(abs(remaining).whole) \(remaining >= 0 ? "left" : "over").")
     }
 
     private func stat(title: String, value: Int, symbol: String, tinted: Bool) -> some View {

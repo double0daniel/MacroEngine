@@ -7,10 +7,13 @@ MacroEngine is a UK-oriented nutrition and meal-tracking app scaffold using Swif
 - **Onboarding:** age, sex used by the estimate, height (cm), weight (kg), activity level, cutting/bulking/maingain approach and an editable macro review.
 - **Target estimates:** Mifflin–St Jeor BMR, activity multipliers, goal-based energy adjustments, and an initial protein/fat/carbohydrate split.
 - **Dashboard:** calorie ring, segmented Protein/Carbs/Fat ring with spaced arcs, macro progress bars, and separate Breakfast/Lunch/Dinner/Snacks logs.
+- **Daily trackers:** workout journal with burned calories included in net totals, water goal and quick adds, and a daily supplement checklist.
+- **Settings:** change cutting/bulking/maingain goals and activity level, recalculate TDEE, and set exact protein/carbohydrate/fat targets.
 - **Food logging:** Open Food Facts name search and barcode lookup, clear-search action, gram text field + slider + stepper controls, and meal-category assignment.
 - **Food library:** favourites and reusable custom meals composed from favourite foods.
 - **Weight telemetry:** daily kg entries persisted locally and a Swift Charts line graph across the recorded history.
 - **Persistence:** local JSON-encoded values in `UserDefaults`, with a migration fallback that treats older diary entries with no meal category as Snacks.
+- **App icon:** `MacroEngine-Icon-Slate.png` is included in `Assets.xcassets/AppIcon.appiconset` and selected by the XcodeGen target settings.
 
 ## Important platform note
 
@@ -74,14 +77,15 @@ These settings are intentionally transparent and editable: equations provide sta
 
 ## Data / production considerations
 
-- Open Food Facts is community-maintained; nutrition values, images, portion sizes and UK product tagging may be missing or inaccurate. Search tries UK-tagged products first and falls back to the wider catalogue. Barcode lookup uses the worldwide catalogue.
-- Diary logs, favourites, custom meals, profile and weight entries currently live on-device in `UserDefaults`. This keeps the implementation self-contained and compatible with the supplied store; for a larger production app, consider migrating the collections to SwiftData and adding export/backup and deletion controls.
+- Open Food Facts is community-maintained; nutrition values, images, portion sizes and UK product tagging may be missing or inaccurate. Keyword search uses the UK endpoint first and falls back to the wider catalogue; barcode lookup uses the UK product endpoint. Search and barcode results show whether they came from the live UK/global API, a cached offline result, or no available response. Open Food Facts currently supports full-text search through its legacy keyword endpoint; API v2 search is filter-based.
+- Diary logs, favourites, custom meals, profile, weight entries, workouts, water and supplement checks currently live on-device in `UserDefaults`. This keeps the implementation self-contained and compatible with the supplied store; for a larger production app, consider migrating the collections to SwiftData and adding export/backup and deletion controls.
 - No analytics, login, cloud sync or external subscription SDK is included.
 
 ## Source map
 
 - `Theme.swift`, `Components.swift`, `AppIconArtwork.swift`: slate palette, shared UI primitives and brand artwork.
-- `Models.swift`: Codable data, the observable store, target calculator and local persistence.
+- `Models.swift`: Codable data, tracker persistence, the observable store, target calculator and local persistence.
+- `TrackerViews.swift`, `SettingsView.swift`: daily workout, hydration and supplement cards, plus TDEE and macro settings.
 - `OnboardingView.swift`: questionnaire and editable macro review.
 - `DashboardView.swift`: calories, macro rings, diary categories and weight chart.
 - `FoodSearchView.swift`: search, scanner entry point, portion editor and nutrition preview.

@@ -13,14 +13,22 @@ final class FoodSearchViewModel {
     var phase: Phase = .idle
     var isLookingUpBarcode = false
     var barcodeError: String?
+    var apiStatus: FoodAPIStatus?
+    var recentSearches: [String]
 
     private let service = OpenFoodFactsService.shared
+    private let recentSearchesKey = "macroengine.search.recent.v1"
+
+    init() {
+        recentSearches = UserDefaults.standard.stringArray(forKey: recentSearchesKey) ?? []
+    }
 
     /// Called from `.task(id: query)`. SwiftUI cancels the previous task when the query changes.
     func search() async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2 else {
             phase = .idle
+            apiStatus = nil
             return
         }
 
@@ -28,15 +36,21 @@ final class FoodSearchViewModel {
             try await Task.sleep(for: .milliseconds(350))
             if Task.isCancelled { return }
             phase = .loading
-            let items = try await service.search(trimmed)
+            apiStatus = nil
+            let result = try await service.searchWithStatus(trimmed)
             if Task.isCancelled { return }
-            phase = items.isEmpty ? .empty : .results(items)
+            apiStatus = result.status
+            phase = result.foods.isEmpty ? .empty : .results(result.foods)
+            rememberSearch(trimmed)
         } catch is CancellationError {
             return
         } catch let error as URLError where error.code == .cancelled {
             return
         } catch {
-            if !Task.isCancelled { phase = .failed(error.localizedDescription) }
+            if !Task.isCancelled {
+                apiStatus = .unavailable
+                phase = .failed(error.localizedDescription)
+            }
         }
     }
 
@@ -44,14 +58,39 @@ final class FoodSearchViewModel {
         isLookingUpBarcode = true
         defer { isLookingUpBarcode = false }
         do {
-            return try await service.product(barcode: barcode)
+            let result = try await service.productWithStatus(barcode: barcode)
+            apiStatus = result.status
+            return result.food
         } catch FoodServiceError.notFound {
+            apiStatus = .liveNoMatch
             barcodeError = "Open Food Facts doesn't have nutrition data for \(barcode) yet. Try searching by name."
             return nil
         } catch {
+            apiStatus = .unavailable
             barcodeError = error.localizedDescription
             return nil
         }
+    }
+
+    func acceptBarcodeLookup(barcode: String, food: FoodItem?, status: FoodAPIStatus, error: String?) {
+        apiStatus = status
+        guard food == nil else { return }
+        barcodeError = error ?? "Open Food Facts doesn't have nutrition data for \(barcode) yet. Try searching by name."
+    }
+
+    func clearSearchHistory() {
+        recentSearches = []
+        query = ""
+        phase = .idle
+        apiStatus = nil
+        UserDefaults.standard.removeObject(forKey: recentSearchesKey)
+    }
+
+    private func rememberSearch(_ query: String) {
+        recentSearches.removeAll { $0.localizedCaseInsensitiveCompare(query) == .orderedSame }
+        recentSearches.insert(query, at: 0)
+        recentSearches = Array(recentSearches.prefix(8))
+        UserDefaults.standard.set(recentSearches, forKey: recentSearchesKey)
     }
 }
 
@@ -69,7 +108,6 @@ struct FoodSearchView: View {
     @State private var viewModel = FoodSearchViewModel()
     @State private var selectedFood: FoodItem?
     @State private var showingScanner = false
-    @State private var scannedCode: String?
     @State private var section: FoodSearchSection = .search
     @State private var selectedCategory: MealCategory
     @FocusState private var searchFocused: Bool
@@ -85,6 +123,7 @@ struct FoodSearchView: View {
                 if section != .customMeals { categoryPicker }
                 if section == .search {
                     searchBar
+                    apiStatusIndicator
                     searchContent
                 } else if section == .favorites {
                     FavoritesSectionView(category: selectedCategory) { food in
@@ -120,13 +159,11 @@ struct FoodSearchView: View {
             }
         }
         .task(id: viewModel.query) { await viewModel.search() }
-        .task(id: scannedCode) {
-            guard let code = scannedCode else { return }
-            if let food = await viewModel.lookup(barcode: code) { selectedFood = food }
-            scannedCode = nil
-        }
         .fullScreenCover(isPresented: $showingScanner) {
-            BarcodeScannerView { scannedCode = $0 }
+            BarcodeScannerView { code, food, status, error in
+                viewModel.acceptBarcodeLookup(barcode: code, food: food, status: status, error: error)
+                if let food { selectedFood = food }
+            }
         }
         .onAppear { searchFocused = true }
         .preferredColorScheme(.dark)
@@ -214,6 +251,20 @@ struct FoodSearchView: View {
                     .background(Slate.surfaceRaised, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .accessibilityLabel("Scan barcode")
+
+            Button {
+                viewModel.clearSearchHistory()
+                searchFocused = true
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Slate.textSecondary)
+                    .frame(width: 42, height: 48)
+                    .background(Slate.surfaceRaised, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .disabled(viewModel.query.isEmpty && viewModel.recentSearches.isEmpty)
+            .opacity(viewModel.query.isEmpty && viewModel.recentSearches.isEmpty ? 0.45 : 1)
+            .accessibilityLabel("Clear recent search history and query")
         }
         .padding(.horizontal, 20)
     }
@@ -223,12 +274,39 @@ struct FoodSearchView: View {
     @ViewBuilder private var searchContent: some View {
         switch viewModel.phase {
         case .idle:
-            EmptyStateView(
-                symbol: "text.magnifyingglass",
-                title: "Find a food",
-                message: "Search by name or brand, or scan the barcode on the package."
-            )
-            .frame(maxHeight: .infinity)
+            if viewModel.recentSearches.isEmpty {
+                EmptyStateView(
+                    symbol: "text.magnifyingglass",
+                    title: "Find a food",
+                    message: "Search by name or brand, or scan the barcode on the package."
+                )
+                .frame(maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Recent searches")
+                            .font(.meCaption.weight(.semibold))
+                            .foregroundStyle(Slate.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        ForEach(viewModel.recentSearches, id: \.self) { recent in
+                            Button {
+                                viewModel.query = recent
+                                searchFocused = true
+                            } label: {
+                                Label(recent, systemImage: "clock.arrow.circlepath")
+                                    .font(.meBody)
+                                    .foregroundStyle(Slate.textPrimary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(12)
+                                    .background(Slate.surface, in: RoundedRectangle(cornerRadius: 12))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 6)
+                }
+            }
 
         case .loading:
             ProgressView()
@@ -271,6 +349,25 @@ struct FoodSearchView: View {
                 Task { await viewModel.search() }
             }
             .frame(maxHeight: .infinity)
+        }
+    }
+
+    private var apiStatusIndicator: some View {
+        Group {
+            if let status = viewModel.apiStatus {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(status.isLive ? Accent.fat : Accent.calories)
+                        .frame(width: 7, height: 7)
+                    Text(status.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Slate.textSecondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 22)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("API status: \(status.title)")
+            }
         }
     }
 

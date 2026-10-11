@@ -19,8 +19,14 @@ private struct AppRootView: View {
     var body: some View {
         Group {
             if diary.hasCompletedOnboarding {
-                DashboardView()
-                    .transition(.opacity)
+                TabView {
+                    DashboardView()
+                        .tabItem { Label("Today", systemImage: "chart.bar.fill") }
+                    SettingsView()
+                        .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
+                }
+                .tint(Slate.textPrimary)
+                .transition(.opacity)
             } else {
                 OnboardingView()
                     .transition(.opacity)

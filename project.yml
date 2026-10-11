@@ -11,9 +11,13 @@ targets:
     type: application
     platform: iOS
     sources:
+      - path: Assets.xcassets
+        buildPhase: resources
       - Theme.swift
       - Models.swift
       - Components.swift
+      - TrackerViews.swift
+      - SettingsView.swift
       - DashboardView.swift
       - FoodSearchView.swift
       - FoodLibraryViews.swift
@@ -30,6 +34,7 @@ targets:
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: "YES"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_NSCameraUsageDescription: "MacroEngine uses the camera to scan food barcodes."
         INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
     scheme:

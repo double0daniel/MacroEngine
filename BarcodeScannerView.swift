@@ -3,11 +3,14 @@ import AVFoundation
 
 /// Full-screen live barcode scanner. Requires `NSCameraUsageDescription` in Info.plist.
 struct BarcodeScannerView: View {
-    let onScan: (String) -> Void
+    let onScan: (String, FoodItem?, FoodAPIStatus, String?) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var permission = AVCaptureDevice.authorizationStatus(for: .video)
     @State private var torchOn = false
+    @State private var isLookingUp = false
+    @State private var apiStatus: FoodAPIStatus?
+    @State private var apiMessage: String?
 
     private var hasTorch: Bool { AVCaptureDevice.default(for: .video)?.hasTorch == true }
 
@@ -36,8 +39,8 @@ struct BarcodeScannerView: View {
     private var scanner: some View {
         ZStack {
             CameraPreview(torchOn: torchOn) { code in
-                onScan(code)
-                dismiss()
+                guard !isLookingUp else { return }
+                Task { await lookupBarcode(code) }
             }
             .ignoresSafeArea()
 
@@ -55,7 +58,56 @@ struct BarcodeScannerView: View {
                     .padding(.vertical, 12)
                     .background(Slate.background.opacity(0.85), in: Capsule())
                     .padding(.bottom, 48)
+
+                if isLookingUp {
+                    HStack(spacing: 8) {
+                        ProgressView().tint(Slate.textPrimary)
+                        Text("Checking UK Open Food Facts…")
+                    }
+                    .font(.meCaption)
+                    .foregroundStyle(Slate.textPrimary)
+                    .padding(12)
+                    .background(Slate.background.opacity(0.9), in: Capsule())
+                    .padding(.bottom, 24)
+                } else if let apiStatus {
+                    HStack(spacing: 7) {
+                        Circle().fill(apiStatus.isLive ? Accent.fat : Accent.calories).frame(width: 7, height: 7)
+                        Text(apiMessage ?? apiStatus.title)
+                    }
+                    .font(.meCaption)
+                    .foregroundStyle(Slate.textPrimary)
+                    .padding(12)
+                    .background(Slate.background.opacity(0.9), in: Capsule())
+                    .padding(.bottom, 24)
+                }
             }
+        }
+    }
+
+    private func lookupBarcode(_ code: String) async {
+        isLookingUp = true
+        apiStatus = nil
+        apiMessage = nil
+        defer { isLookingUp = false }
+        do {
+            let result = try await OpenFoodFactsService.shared.productWithStatus(barcode: code)
+            apiStatus = result.status
+            apiMessage = result.status.title
+            try? await Task.sleep(for: .milliseconds(450))
+            onScan(code, result.food, result.status, nil)
+            dismiss()
+        } catch FoodServiceError.notFound {
+            apiStatus = .liveNoMatch
+            apiMessage = apiStatus?.title
+            try? await Task.sleep(for: .milliseconds(450))
+            onScan(code, nil, .liveNoMatch, FoodServiceError.notFound.localizedDescription)
+            dismiss()
+        } catch {
+            apiStatus = .unavailable
+            apiMessage = error.localizedDescription
+            try? await Task.sleep(for: .milliseconds(450))
+            onScan(code, nil, .unavailable, error.localizedDescription)
+            dismiss()
         }
     }
 
