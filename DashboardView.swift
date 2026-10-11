@@ -7,7 +7,8 @@ struct DashboardView: View {
     @State private var searchCategory: MealCategory?
     @State private var userQuery: String = ""
     @State private var mascotResponse: String? = nil
-    @State private var askMascotState: MascotState = .coaching
+    @State private var askMascotState: MascotState = .neutral
+    @State private var activeAIQuery: UUID?
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -111,14 +112,14 @@ struct DashboardView: View {
                 .lineLimit(1...3)
                 .submitLabel(.send)
                 .focused($isInputFocused)
-                .onSubmit { submitQuestion() }
+                .onSubmit { processAIQuery() }
                 .padding(.horizontal, 13)
                 .padding(.vertical, 12)
                 .frame(minHeight: 46)
                 .background(Slate.background, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(Slate.stroke.opacity(0.7), lineWidth: 1))
 
-                Button(action: submitQuestion) {
+                Button(action: processAIQuery) {
                     Image(systemName: "paperplane.fill")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(Slate.background)
@@ -141,14 +142,32 @@ struct DashboardView: View {
             .scrollIndicators(.hidden)
 
             if let mascotResponse {
-                Text(mascotResponse)
-                    .font(.meBody)
-                    .foregroundStyle(Slate.textPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
-                    .background(Slate.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .accessibilityLabel("Macro AI response: \(mascotResponse)")
+                HStack(alignment: .top, spacing: 10) {
+                    Text(mascotResponse)
+                        .font(.meBody)
+                        .foregroundStyle(Slate.textPrimary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityLabel("Macro AI response: \(mascotResponse)")
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            activeAIQuery = nil
+                            self.mascotResponse = nil
+                            askMascotState = .neutral
+                        }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Slate.textTertiary)
+                            .frame(width: 28, height: 28)
+                            .background(Slate.surfaceRaised, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss answer")
+                }
+                .padding(14)
+                .background(Slate.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -158,7 +177,7 @@ struct DashboardView: View {
     private func suggestionChip(_ title: String) -> some View {
         Button {
             userQuery = title
-            answerQuestion(title)
+            processAIQuery()
             isInputFocused = false
         } label: {
             Text(title)
@@ -172,50 +191,46 @@ struct DashboardView: View {
         .buttonStyle(.plain)
     }
 
-    private func submitQuestion() {
+    private func processAIQuery() {
         let query = userQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return }
-        answerQuestion(query)
-        isInputFocused = false
-    }
+        userQuery = ""
 
-    private func answerQuestion(_ query: String) {
-        let text = query.lowercased()
-        let protein = diary.totals.protein.whole
-        let proteinGoal = diary.goals.protein.whole
-        let proteinRemaining = max(0, proteinGoal - protein)
-        let calorieTarget = diary.adjustedDailyCalorieTarget.whole
-        let caloriesRemaining = max(0, calorieTarget - diary.totals.calories.whole)
-        let name = greetingName == "there" ? "" : "\(greetingName), "
-
-        let answer: String
-        var state: MascotState = .coaching
-        if text.contains("protein") && (text.contains("track") || text.contains("enough") || text.contains("need")) {
-            if proteinGoal > 0 && protein >= proteinGoal {
-                answer = "Nice work, \(name)you've reached your protein goal: \(protein) of \(proteinGoal) g. Keep your meals balanced for the rest of the day."
-                state = .celebrating
-            } else {
-                answer = "You're at \(protein) of \(proteinGoal) g protein today, with about \(proteinRemaining) g to go. A protein-rich snack or a serving of lean protein at your next meal can help close the gap."
-            }
-        } else if text.contains("rollover") || text.contains("bank") {
-            if diary.rolloverEnabled {
-                answer = "Calorie rollover is on. You currently have \(diary.bankedCalories) kcal banked, adding \(diary.rolloverAdjustment) kcal to today's base target of \(diary.goals.calories.whole) kcal. Unused calories can build the bank up to your \(diary.maxRolloverCap) kcal cap."
-            } else {
-                answer = "Calorie rollover is currently off. When enabled in Settings, eligible unused calories can be banked for later days, up to your chosen cap."
-            }
-        } else if text.contains("snack") || text.contains("food") {
-            answer = "A simple high-protein option is Greek yogurt or skyr; check the label for the serving size and macros. You have about \(proteinRemaining) g protein and \(caloriesRemaining) kcal remaining today, so choose a portion that fits."
-        } else if text.contains("calorie") || text.contains("calories") || text.contains("track") {
-            answer = "You've logged \(diary.totals.calories.whole) kcal against an adjusted target of \(calorieTarget) kcal, with about \(caloriesRemaining) kcal remaining. Your target includes any active rollover adjustment."
-        } else if text.contains("recover") || text.contains("recovery") || text.contains("workout") || text.contains("training") {
-            answer = "For recovery, prioritize a meal with protein and carbohydrates, drink to your hydration goal, and give sleep time to do its work. Today you're at \(protein) of \(proteinGoal) g protein and \(diary.waterConsumedTodayMl) ml water."
-        } else {
-            answer = "\(name)today you're at \(diary.totals.calories.whole) kcal and \(protein) g protein. Your targets are \(calorieTarget) kcal and \(proteinGoal) g protein. Ask me about protein, calories, rollover, snacks, or recovery for a more specific tip."
+        withAnimation(.easeInOut(duration: 0.25)) {
+            askMascotState = .coaching
         }
+        isInputFocused = false
 
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
-            askMascotState = state
-            mascotResponse = answer
+        let queryID = UUID()
+        activeAIQuery = queryID
+        let remainingCalories = diary.adjustedDailyCalorieTarget.whole - diary.netCaloriesToday.whole
+        let remainingProtein = diary.goals.protein.whole - diary.totals.protein.whole
+        let remainingCarbs = diary.goals.carbs.whole - diary.totals.carbs.whole
+        let remainingFat = diary.goals.fat.whole - diary.totals.fat.whole
+        let goal = "\(diary.profile?.goal.title ?? "Maingain") [target=\(diary.adjustedDailyCalorieTarget.whole)]"
+        let shouldCelebrate = LocalAIEngine.shouldCelebrate(
+            query: query,
+            remainingCals: remainingCalories,
+            remainingProtein: remainingProtein
+        )
+
+        Task { @MainActor in
+            await Task.yield()
+            guard activeAIQuery == queryID else { return }
+            let answer = LocalAIEngine.generateInsight(
+                for: query,
+                userName: userName,
+                remainingCals: remainingCalories,
+                remainingProtein: remainingProtein,
+                remainingCarbs: remainingCarbs,
+                remainingFat: remainingFat,
+                goal: goal,
+                waterMl: diary.waterConsumedTodayMl
+            )
+            withAnimation(.easeInOut(duration: 0.25)) {
+                mascotResponse = answer
+                askMascotState = shouldCelebrate ? .celebrating : .coaching
+            }
         }
     }
 

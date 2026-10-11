@@ -21,6 +21,7 @@ targets:
       - TrackerViews.swift
       - SettingsView.swift
       - DashboardView.swift
+      - LocalAIEngine.swift
       - FoodSearchView.swift
       - FoodLibraryViews.swift
       - RecipeImporterService.swift
