@@ -14,15 +14,20 @@ enum LocalAIEngine {
     ) async -> String {
         let remainingCalories = remainingCals
         let proteinRemainingGrams = remainingProtein
-        let foodFits = remainingCalories >= 400
         let prompt = """
         <|im_start|>system
-        You are MacroEngine's UK fitness coach. Provide ONE concise fitness/macro tip in 1 short sentence (around 15-20 words). Never generate multiple sentences.<|im_end|>
+        You are MacroEngine's UK fitness coach. Give ONE concise sentence (max 15 words) recommending a high-protein snack or meal.<|im_end|>
         <|im_start|>user
-        Telemetry: \(remainingCalories) kcal, \(proteinRemainingGrams)g protein left. Fits budget: \(foodFits ? "Yes" : "No"). \(query)<|im_end|>
+        Query: \(query)
+        Remaining: \(remainingCalories) kcal, \(proteinRemainingGrams)g protein.<|im_end|>
         <|im_start|>assistant
         """
-        return await SmolLMInferenceService.shared.generateResponse(prompt: prompt)
+        return await SmolLMInferenceService.shared.generateResponse(
+            prompt: prompt,
+            remainingCalories: remainingCalories,
+            remainingProtein: proteinRemainingGrams,
+            userQuery: query
+        )
     }
 
     /// Keeps the dashboard's mascot celebration cue independent of response generation.

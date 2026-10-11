@@ -7,14 +7,19 @@ private struct SmolLMLoadedAssets: @unchecked Sendable {
     let tokenizer: SmolLMTokenizer
 }
 
+private struct QwenGeneratedResponse: Sendable {
+    let text: String
+    let tokenCount: Int
+}
+
 private final class SmolLMInferenceRace: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<String?, Never>?
+    private var continuation: CheckedContinuation<QwenGeneratedResponse?, Never>?
     private var inferenceTask: Task<Void, Never>?
     private var timeoutTask: Task<Void, Never>?
     private var finished = false
 
-    func install(_ continuation: CheckedContinuation<String?, Never>) {
+    func install(_ continuation: CheckedContinuation<QwenGeneratedResponse?, Never>) {
         lock.lock()
         if finished {
             lock.unlock()
@@ -47,7 +52,7 @@ private final class SmolLMInferenceRace: @unchecked Sendable {
         }
     }
 
-    func finish(_ value: String?) {
+    func finish(_ value: QwenGeneratedResponse?) {
         lock.lock()
         guard !finished else {
             lock.unlock()
@@ -106,7 +111,7 @@ private enum SmolLMModelRunner {
     private static let maximumGenerationTokens = 25
     private static let maximumGenerationDuration = 6.0
 
-    static func generate(prompt: String, model: MLModel, tokenizer: SmolLMTokenizer) throws -> String? {
+    static func generate(prompt: String, model: MLModel, tokenizer: SmolLMTokenizer) throws -> QwenGeneratedResponse? {
         guard #available(iOS 18.0, *) else { return nil }
         let inputTokens = tokenizer.encodePrompt(
             prompt,
@@ -156,9 +161,14 @@ private enum SmolLMModelRunner {
             nextInputTokens = [nextToken]
         }
 
+        guard generated.count >= 3 else {
+            return QwenGeneratedResponse(text: "", tokenCount: generated.count)
+        }
         let answer = firstSentence(tokenizer.decode(generated))
-        guard !answer.isEmpty, answer.count <= 600 else { return nil }
-        return answer
+        guard !answer.isEmpty, answer.count <= 600 else {
+            return QwenGeneratedResponse(text: "", tokenCount: generated.count)
+        }
+        return QwenGeneratedResponse(text: answer, tokenCount: generated.count)
     }
 
     private static func tokenArray(_ tokens: [Int]) throws -> MLMultiArray {
@@ -242,10 +252,18 @@ final class SmolLMInferenceService: ObservableObject {
     /// Lazily loads assets for the first query and runs greedy prediction away from the main thread.
     /// The Qwen graph accepts sequences up to 2,048 tokens; this service caps
     /// each prompt plus response at 128 tokens.
-    func generateResponse(prompt: String) async -> String {
-        let fallback = telemetryFallback(from: prompt)
+    func generateResponse(
+        prompt: String,
+        remainingCalories: Int,
+        remainingProtein: Int,
+        userQuery: String
+    ) async -> String {
+        let fallback = telemetryFallback(
+            remainingCalories: remainingCalories,
+            remainingProtein: remainingProtein
+        )
         let race = SmolLMInferenceRace()
-        let result = await withTaskCancellationHandler {
+        let result: QwenGeneratedResponse? = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 race.install(continuation)
                 let inferenceTask = Task.detached(priority: .userInitiated) { [weak self] in
@@ -278,26 +296,28 @@ final class SmolLMInferenceService: ObservableObject {
             // any currently executing Core ML prediction pass completes.
             race.cancel()
         }
-        let response = result?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return response.isEmpty ? fallback : response
+        guard let result else { return fallback }
+        let response = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard result.tokenCount >= 3, !response.isEmpty else {
+            print("Qwen produced empty generation")
+            return queryAwareFallback(for: userQuery)
+        }
+        return response
     }
 
-    private func telemetryFallback(from prompt: String) -> String {
-        let pattern = #"Telemetry:\s*(-?\d+)\s*kcal,\s*(-?\d+)g\s+protein(?:\s+left)?"#
-        guard
-            let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
-            let match = expression.firstMatch(in: prompt, range: NSRange(prompt.startIndex..<prompt.endIndex, in: prompt)),
-            let caloriesRange = Range(match.range(at: 1), in: prompt),
-            let proteinRange = Range(match.range(at: 2), in: prompt),
-            let calories = Int(prompt[caloriesRange]),
-            let protein = Int(prompt[proteinRange])
-        else {
-            return "I couldn't generate a reply right now. Please try again."
-        }
+    private func telemetryFallback(remainingCalories: Int, remainingProtein: Int) -> String {
+        let calories = remainingCalories > 0 ? "\(remainingCalories) kcal" : "calories"
+        let protein = remainingProtein > 0 ? "\(remainingProtein)g protein" : "protein"
+        return "You have \(calories) and \(protein) left today. Start with a protein-rich meal like chicken breast, eggs, or Greek yogurt!"
+    }
 
-        let calorieStatus = calories < 0 ? "\(abs(calories)) kcal over" : "\(calories) kcal left"
-        let proteinStatus = protein < 0 ? "\(abs(protein)) g over your protein target" : "\(protein) g protein left"
-        return "Today: \(calorieStatus), \(proteinStatus). Keep your next meal balanced."
+    private func queryAwareFallback(for userQuery: String) -> String {
+        let query = userQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            return "Let's keep it simple: choose chicken, eggs, or Greek yogurt for a protein-rich option today."
+        }
+        let shortQuery = String(query.prefix(72)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return "For ‘\(shortQuery)’, try a protein-rich option like chicken, eggs, or Greek yogurt."
     }
 
     private func loadAssetsIfNeeded() async -> SmolLMLoadedAssets? {
@@ -392,9 +412,13 @@ private struct SmolLMTokenizer: Sendable {
         byteToUnicode = maps.forward
         unicodeToByte = maps.reverse
         let specials = Dictionary(uniqueKeysWithValues: file.addedTokens.map { ($0.content, $0.id) })
-        specialTokenIDs = specials
-        endOfTextID = specials["<|endoftext|>"] ?? 0
-        endOfTurnID = specials["<|im_end|>"] ?? 2
+        specialTokenIDs = specials.merging([
+            "<|im_start|>": 151_644,
+            "<|im_end|>": 151_645,
+            "<|endoftext|>": 151_643
+        ]) { configured, _ in configured }
+        endOfTextID = specials["<|endoftext|>"] ?? 151_643
+        endOfTurnID = specials["<|im_end|>"] ?? 151_645
     }
 
     func encode(_ text: String) -> [Int] {
