@@ -8,7 +8,7 @@ struct SettingsView: View {
     @State private var protein = "140"
     @State private var carbs = "200"
     @State private var fat = "65"
-    @State private var saved = false
+    @FocusState private var isFocused: Bool
 
     private var baseProfile: UserProfile {
         diary.profile ?? UserProfile(age: 30, sex: .preferNotToSay, heightCm: 170,
@@ -46,6 +46,13 @@ struct SettingsView: View {
         [protein, carbs, fat].allSatisfy { Double($0).map { $0 >= 0 && $0.isFinite } ?? false }
     }
 
+    private var settingsAreCurrent: Bool {
+        guard diary.profile == draftProfile else { return false }
+        return diary.goals.protein == manualMacros.protein &&
+            diary.goals.carbs == manualMacros.carbs &&
+            diary.goals.fat == manualMacros.fat
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -59,18 +66,20 @@ struct SettingsView: View {
                 .padding(.bottom, 28)
             }
             .scrollIndicators(.hidden)
+            .scrollDismissesKeyboard(.immediately)
             .slateScreen()
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.large)
             .toolbarBackground(Slate.background, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .onAppear(perform: loadCurrentSettings)
-            .onChange(of: goal) { _, _ in saved = false }
-            .onChange(of: activity) { _, _ in saved = false }
-            .onChange(of: weightKg) { _, _ in saved = false }
-            .onChange(of: protein) { _, _ in saved = false }
-            .onChange(of: carbs) { _, _ in saved = false }
-            .onChange(of: fat) { _, _ in saved = false }
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { isFocused = false }
+                        .foregroundStyle(Slate.textPrimary)
+                }
+            }
         }
         .preferredColorScheme(.dark)
     }
@@ -108,6 +117,7 @@ struct SettingsView: View {
                         .font(.meCaption)
                         .foregroundStyle(Slate.textSecondary)
                     TextField("70", text: $weightKg)
+                        .focused($isFocused)
                         .keyboardType(.decimalPad)
                         .settingsInput()
                 }
@@ -166,9 +176,8 @@ struct SettingsView: View {
 
             Button {
                 diary.updateProfileAndGoals(draftProfile, goals: manualMacros)
-                saved = true
             } label: {
-                Text(saved ? "Settings saved" : "Save settings")
+                Text(settingsAreCurrent ? "Settings saved" : "Save settings")
             }
             .buttonStyle(.primary)
             .disabled(!validManualMacros)
@@ -191,6 +200,7 @@ struct SettingsView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
             TextField("0", text: text)
+                .focused($isFocused)
                 .keyboardType(.numberPad)
                 .settingsInput()
             Text("grams")
@@ -204,7 +214,7 @@ struct SettingsView: View {
         guard let profile = diary.profile else { return }
         goal = profile.goal.primaryGoal
         activity = profile.activityLevel
-        weightKg = String(format: "%.1f", profile.weightKg)
+        weightKg = String(profile.weightKg)
         protein = String(diary.goals.protein.whole)
         carbs = String(diary.goals.carbs.whole)
         fat = String(diary.goals.fat.whole)
@@ -215,7 +225,7 @@ struct SettingsView: View {
         protein = String(values.protein.whole)
         carbs = String(values.carbs.whole)
         fat = String(values.fat.whole)
-        saved = false
+        diary.updateProfileAndGoals(draftProfile, goals: values)
     }
 }
 

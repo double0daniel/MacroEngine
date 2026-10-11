@@ -83,14 +83,10 @@ struct CustomMealsSectionView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Button { showingCreateMeal = true } label: {
-                    VStack(spacing: 5) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 16, weight: .bold))
-                        Text("Create Custom\nMeal")
-                            .multilineTextAlignment(.center)
-                            .lineSpacing(0)
-                    }
-                    .frame(maxWidth: .infinity)
+                    Text("Create Custom\nMeal")
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 2)
                 }
                 .buttonStyle(.primary)
 

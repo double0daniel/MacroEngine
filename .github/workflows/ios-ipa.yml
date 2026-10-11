@@ -4,6 +4,10 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -34,15 +38,33 @@ jobs:
         run: |
           set -euo pipefail
           APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/MacroEngine.app"
-          PAYLOAD_PATH="$RUNNER_TEMP/ipa/Payload"
+          OUTPUT_PATH="$RUNNER_TEMP/output"
+          PAYLOAD_PATH="$OUTPUT_PATH/Payload"
+          IPA_PATH="$OUTPUT_PATH/MacroEngine-unsigned.ipa"
           test -d "$APP_PATH"
           mkdir -p "$PAYLOAD_PATH"
           cp -R "$APP_PATH" "$PAYLOAD_PATH/MacroEngine.app"
-          ditto -c -k --sequesterRsrc --keepParent "$PAYLOAD_PATH" "$RUNNER_TEMP/MacroEngine-unsigned.ipa"
+          ditto -c -k --sequesterRsrc --keepParent "$PAYLOAD_PATH" "$IPA_PATH"
+          test -f "$IPA_PATH"
 
       - name: Upload unsigned IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: MacroEngine-unsigned-IPA
-          path: ${{ runner.temp }}/MacroEngine-unsigned.ipa
+          path: ${{ runner.temp }}/output/MacroEngine-unsigned.ipa
           if-no-files-found: error
+
+      - name: Publish raw IPA to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          IPA_PATH="$RUNNER_TEMP/output/MacroEngine-unsigned.ipa"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$IPA_PATH" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$IPA_PATH" \
+              --title "MacroEngine $GITHUB_REF_NAME" \
+              --generate-notes
+          fi

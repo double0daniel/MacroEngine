@@ -39,7 +39,7 @@ The simulator may not provide a usable live camera feed, so test scanning on a p
 
 ## Build and install an IPA with GitHub Actions
 
-The `Build iOS IPA` workflow builds an unsigned iPhone app on pushes to `main` or when started manually from the Actions tab. It uploads `MacroEngine-unsigned-IPA` as a run artifact. No Apple signing certificate, provisioning profile or GitHub Actions secret is needed for the build.
+The `Build iOS IPA` workflow builds an unsigned iPhone app on pushes to `main`, version tags (`v*`), or when started manually from the Actions tab. The Actions artifact points directly to `output/MacroEngine-unsigned.ipa`. GitHub packages workflow artifacts as ZIP downloads, so for a raw `.ipa` file, push a version tag (for example, `git tag v0.1.0` then `git push origin v0.1.0`); the workflow attaches the `.ipa` itself to that GitHub Release. No Apple signing certificate, provisioning profile or GitHub Actions secret is needed for the build.
 
 The downloaded IPA must still be signed before iOS will install and run it. On Windows, install AltServer and AltStore using [AltStore's Windows guide](https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows). Then hold **Shift** while clicking the AltServer tray icon, choose **Sideload .ipa…**, and select the downloaded IPA. AltServer signs it with your Apple ID and installs it to the connected iPhone. Keep AltServer installed; apps signed with a free Apple ID need refreshing every seven days. See [AltServer's sideloading notes](https://faq.altstore.io/release-notes/altserver).
 
