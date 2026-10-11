@@ -34,28 +34,13 @@ VS Code on Windows is suitable for editing Swift files and using Git, but **the 
 
 The simulator may not provide a usable live camera feed, so test scanning on a physical device. Search remains available without camera access.
 
-## Build an installable IPA with GitHub Actions
+## Build and install an IPA with GitHub Actions
 
-The `Build iOS IPA` workflow archives the app and exports an Ad Hoc signed IPA on pushes to `main` or when started manually from the Actions tab. Ad Hoc signing requires an Apple Developer account, an Apple Distribution certificate, and a provisioning profile that includes the iPhone's registered device identifier.
+The `Build iOS IPA` workflow builds an unsigned iPhone app on pushes to `main` or when started manually from the Actions tab. It uploads `MacroEngine-unsigned-IPA` as a run artifact. No Apple signing certificate, provisioning profile or GitHub Actions secret is needed for the build.
 
-Add these repository actions secrets under **Settings → Secrets and variables → Actions**:
+The downloaded IPA must still be signed before iOS will install and run it. On Windows, install AltServer and AltStore using [AltStore's Windows guide](https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows). Then hold **Shift** while clicking the AltServer tray icon, choose **Sideload .ipa…**, and select the downloaded IPA. AltServer signs it with your Apple ID and installs it to the connected iPhone. Keep AltServer installed; apps signed with a free Apple ID need refreshing every seven days. See [AltServer's sideloading notes](https://faq.altstore.io/release-notes/altserver).
 
-- `IOS_CERTIFICATE_BASE64`: base64-encoded `.p12` Apple Distribution certificate.
-- `IOS_CERTIFICATE_PASSWORD`: password used when exporting that `.p12` file.
-- `IOS_PROVISIONING_PROFILE_BASE64`: base64-encoded Ad Hoc provisioning profile for `com.double0daniel.MacroEngine`.
-- `IOS_TEAM_ID`: Apple Developer team ID.
-- `KEYCHAIN_PASSWORD`: any temporary password for the workflow's build keychain.
-
-On Windows PowerShell, create the values for the two base64 secrets without printing them to the terminal:
-
-```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\distribution.p12")) | Set-Clipboard
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\profile.mobileprovision")) | Set-Clipboard
-```
-
-Run one line at a time and paste the clipboard contents into `IOS_CERTIFICATE_BASE64` and `IOS_PROVISIONING_PROFILE_BASE64` respectively. On macOS, base64-encode the files with `base64 -i file -o file.base64` and copy their contents into the matching secrets. Register the iPhone's UDID in the Apple Developer account and include it in the Ad Hoc profile before exporting the profile. After a successful workflow run, download `MacroEngine-IPA` from the run's **Artifacts** section and install the IPA using a device installation tool such as Apple Configurator.
-
-The signing certificate and profile are private credentials. Store them only in GitHub Actions secrets; do not commit them to this repository.
+After a successful workflow run, open it in the GitHub **Actions** tab and download the `MacroEngine-unsigned-IPA` artifact. Connect and unlock the iPhone, trust the computer if prompted, and make sure Developer Mode is enabled on iOS 16 or later. Your Apple ID is used by AltServer on your own computer; it is not sent to GitHub by this workflow.
 
 ## VS Code / Git setup
 
