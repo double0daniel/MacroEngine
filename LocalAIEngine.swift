@@ -26,6 +26,7 @@ enum LocalAIEngine {
     private struct QuerySignals {
         let intent: Intent
         let entities: [String]
+        let treat: String?
         let isConcerned: Bool
         let isPositive: Bool
     }
@@ -36,7 +37,8 @@ enum LocalAIEngine {
         FoodOption(name: "Skyr", unitGrams: 150, calories: 95, protein: 16, carbs: 6, fat: 0.5, aliases: ["skyr"]),
         FoodOption(name: "Cottage cheese", unitGrams: 100, calories: 98, protein: 12, carbs: 3, fat: 4, aliases: ["cottage cheese"]),
         FoodOption(name: "Lean bresaola", unitGrams: 50, calories: 78, protein: 16, carbs: 0.5, fat: 1.5, aliases: ["bresaola"]),
-        FoodOption(name: "Cooked chicken slices", unitGrams: 60, calories: 92, protein: 18, carbs: 1, fat: 2, aliases: ["chicken"]),
+        FoodOption(name: "M&S cooked chicken breast slices", unitGrams: 60, calories: 70, protein: 15, carbs: 1, fat: 1, aliases: ["chicken", "m&s chicken", "cooked chicken"]),
+        FoodOption(name: "Protein oats", unitGrams: 50, calories: 190, protein: 12, carbs: 30, fat: 4, aliases: ["oats", "porridge", "protein oats"]),
         FoodOption(name: "Egg", unitGrams: 1, calories: 78, protein: 6.3, carbs: 0.6, fat: 5.3, aliases: ["egg", "eggs"])
     ]
 
@@ -62,6 +64,16 @@ enum LocalAIEngine {
         let goalName = goal.components(separatedBy: " [target=").first ?? goal
         let goalStyle = goalName.lowercased()
         let dailyTarget = targetCalories(from: goal)
+
+        if let treat = signals.treat {
+            return treatRecommendation(
+                address: address,
+                treat: treat,
+                remainingCals: remainingCals,
+                remainingProtein: remainingProtein,
+                remainingCarbs: remainingCarbs
+            )
+        }
 
         switch signals.intent {
         case .food:
@@ -186,13 +198,13 @@ enum LocalAIEngine {
             let leftMatches = entities.contains(lhs.name)
             let rightMatches = entities.contains(rhs.name)
             if leftMatches != rightMatches { return leftMatches }
-            let leftEfficiency = lhs.protein / lhs.calories
-            let rightEfficiency = rhs.protein / rhs.calories
-            return leftEfficiency > rightEfficiency
+            return foodFitScore(lhs, remainingProtein: remainingProtein, remainingCarbs: remainingCarbs)
+                > foodFitScore(rhs, remainingProtein: remainingProtein, remainingCarbs: remainingCarbs)
         }
         let options = requestedOption.map { selected in
             [selected] + rankedOptions.filter { $0.name != selected.name }
-        } ?? rankedOptions
+        } ?? rotatingFallbackOptions(from: rankedOptions, remainingCals: remainingCals,
+                                     remainingProtein: remainingProtein, remainingCarbs: remainingCarbs)
 
         guard remainingCals > 0 else {
             let choice = requestedOption ?? foodOptions[4]
@@ -207,7 +219,7 @@ enum LocalAIEngine {
             return (option, scale)
         }
         guard let best = requestedOption.flatMap({ selected in candidates.first(where: { $0.0.name == selected.name }) })
-                ?? candidates.max(by: { $0.0.protein * $0.1 < $1.0.protein * $1.1 }) else {
+                ?? candidates.first else {
             return "\(address)with about \(remainingCals) kcal and \(remainingProtein) g protein left, a full high-protein serving may not fit comfortably. Try a smaller amount of cooked chicken slices or Skyr, and compare the label with your remaining targets (\(remainingCarbs) g carbs and \(remainingFat) g fat)."
         }
 
@@ -232,17 +244,68 @@ enum LocalAIEngine {
         return "\(address)a portion of \(portionName) is a practical UK option: roughly \(estimateCalories) kcal, \(estimateProtein) g protein, \(estimateCarbs) g carbs and \(estimateFat) g fat. That should leave about \(remainingAfter) kcal.\(entityHint) \(proteinNote) Nutrition varies by brand and serving, so check the label."
     }
 
+    private static func treatRecommendation(address: String, treat: String, remainingCals: Int,
+                                             remainingProtein: Int, remainingCarbs: Int) -> String {
+        let proteinLine = remainingProtein > 0
+            ? " Keep your \(remainingProtein) g protein and \(max(0, remainingCarbs)) g carb targets in view; add a lean protein side if the treat is low in protein."
+            : " Your protein target is already covered, so focus on the portion that feels satisfying."
+
+        if remainingCals >= 400 {
+            let portion = treat == "pizza" ? "one or two slices" : "a planned serving"
+            return "\(address)yes, you can plan \(portion) of \(treat) today. You have about \(remainingCals) kcal left, so check the pack or menu and keep the portion within that allowance.\(proteinLine)"
+        }
+
+        let allowance = remainingCals >= 0
+            ? "You've got about \(remainingCals) kcal left today."
+            : "You're about \(abs(remainingCals)) kcal over today's allowance."
+        let compromise: String
+        switch treat {
+        case "pizza": compromise = "A thin slice or a high-protein pizza wrap is a better fit; save a full pizza portion for a day with more room if you fancy it."
+        case "burger": compromise = "A smaller burger or a bunless version with a lean patty is a better fit; check the menu calories before ordering."
+        case "chips": compromise = "Try a small side portion, or swap to a lighter potato portion and keep the rest of the meal simple."
+        case "doner": compromise = "A smaller doner portion with salad, or a lean chicken wrap, will be easier to fit than a full takeaway box."
+        case "beer": compromise = "A single drink or alcohol-free option is easier to fit than several pints; check the label or menu for the calories."
+        default: compromise = "A couple of squares or a mini portion can scratch the itch; save the larger serving for a day with more room if you like."
+        }
+        return "\(address)\(allowance) A full serving of \(treat) could take you over, but \(compromise) You also have about \(max(0, remainingProtein)) g protein and \(max(0, remainingCarbs)) g carbs left, so plan the next meal around those numbers."
+    }
+
+    private static func foodFitScore(_ option: FoodOption, remainingProtein: Int, remainingCarbs: Int) -> Double {
+        let proteinCoverage = min(1, option.protein / Double(max(1, remainingProtein)))
+        let carbCoverage = min(1, option.carbs / Double(max(1, remainingCarbs)))
+        let proteinEfficiency = option.protein / option.calories
+        return proteinCoverage * 0.65 + carbCoverage * 0.25 + proteinEfficiency * 0.1
+    }
+
+    private static func rotatingFallbackOptions(from options: [FoodOption], remainingCals: Int,
+                                                 remainingProtein: Int, remainingCarbs: Int) -> [FoodOption] {
+        let fallbackNames = ["M&S cooked chicken breast slices", "Skyr", "Cottage cheese", "Protein oats"]
+        let fallback = options.filter { fallbackNames.contains($0.name) }
+        guard !fallback.isEmpty else { return options }
+        let rotation = abs(remainingCals / 100 + remainingProtein + remainingCarbs) % fallback.count
+        return Array(fallback[rotation...]) + Array(fallback[..<rotation])
+    }
+
     private static func analyse(_ query: String) -> QuerySignals {
         let text = normalized(query)
         let entities = foodOptions
             .filter { option in option.aliases.contains(where: { text.contains($0) }) }
             .map(\.name)
+        let treat = treatMention(in: text)
         let hasQuestion = text.contains("?") || text.hasPrefix("how ") || text.hasPrefix("what ")
         let isConcerned = containsAny(text, ["tired", "fatigue", "hungry", "struggling", "behind", "stressed", "worried", "frustrated", "sore", "low energy"])
         let isPositive = containsAny(text, ["great", "personal best", "hit my goal", "reached my goal", "on track", "crushed", "new pr"])
 
         let intent: Intent
-        if containsAny(text, ["rollover", "calorie bank", "banked calorie"]) {
+        let asksPermissionToEat = containsAny(text, [
+            "can i eat", "can i have", "is it okay to eat", "is it ok to eat", "is it okay if i eat", "is it ok if i eat"
+        ])
+
+        if treat != nil {
+            intent = .food
+        } else if asksPermissionToEat {
+            intent = .food
+        } else if containsAny(text, ["rollover", "calorie bank", "banked calorie"]) {
             intent = .rollover
         } else if containsAny(text, ["tdee", "maintenance calories", "energy expenditure"]) {
             intent = .tdee
@@ -261,7 +324,19 @@ enum LocalAIEngine {
             intent = .openEnded
         }
 
-        return QuerySignals(intent: intent, entities: entities, isConcerned: isConcerned, isPositive: isPositive)
+        return QuerySignals(intent: intent, entities: entities, treat: treat, isConcerned: isConcerned, isPositive: isPositive)
+    }
+
+    private static func treatMention(in text: String) -> String? {
+        let treats: [(name: String, aliases: [String])] = [
+            ("pizza", ["pizza", "pizzeria"]),
+            ("burger", ["burger", "hamburger", "cheeseburger"]),
+            ("chips", ["chips", "fries", "french fries"]),
+            ("doner", ["doner", "döner", "kebab"]),
+            ("beer", ["beer", "lager", "pint"]),
+            ("chocolate", ["chocolate", "choc", "cocoa"])
+        ]
+        return treats.first { treat in treat.aliases.contains(where: { text.contains($0) }) }?.name
     }
 
     private static func normalized(_ text: String) -> String {

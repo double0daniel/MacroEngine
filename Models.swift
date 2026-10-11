@@ -585,7 +585,9 @@ final class DiaryStore {
     }
 
     var adjustedDailyCalorieTarget: Double {
-        max(0, baseDailyCalorieTarget + Double(max(0, activeEnergyBurnedToday)) + Double(rolloverAdjustment))
+        let healthSyncEnabled = UserDefaults.standard.object(forKey: "isHealthKitSyncEnabled") as? Bool ?? true
+        let watchBurn = healthSyncEnabled ? max(0, activeEnergyBurnedToday) : 0
+        return max(0, baseDailyCalorieTarget + Double(watchBurn) + Double(rolloverAdjustment))
     }
 
     func updateActiveEnergyBurnedToday(_ calories: Int) {
@@ -942,6 +944,7 @@ final class DiaryStore {
         }
         NotificationManager.shared.disableReminders()
         defaults.removeObject(forKey: "userName")
+        defaults.removeObject(forKey: "isHealthKitSyncEnabled")
         WidgetDataManager.shared.reset()
 
         entries = []
@@ -964,6 +967,7 @@ final class DiaryStore {
         maxRolloverCap = 500
         bankedCalories = 0
         lastRolloverProcessedDay = nil
+        Task { await HealthKitManager.shared.setSyncEnabled(false, diary: self) }
     }
 
     func recordWeight(_ weightKg: Double, date: Date = .now) {

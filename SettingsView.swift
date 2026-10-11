@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var showingDashboardLayout = false
     @State private var showingResetConfirmation = false
     @State private var smartPushRemindersEnabled = false
+    @AppStorage("isHealthKitSyncEnabled") private var isHealthKitSyncEnabled = true
     @FocusState private var isFocused: Bool
 
     private var baseProfile: UserProfile {
@@ -69,6 +70,7 @@ struct SettingsView: View {
                         goalCard
                         rolloverCard
                         smartPushRemindersCard
+                        healthSyncCard
                         macroCard
                         dashboardLayoutCard
                         note
@@ -86,6 +88,11 @@ struct SettingsView: View {
             .toolbarBackground(Slate.background, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .onAppear(perform: loadCurrentSettings)
+            .onChange(of: isHealthKitSyncEnabled) { _, enabled in
+                Task {
+                    await HealthKitManager.shared.setSyncEnabled(enabled, diary: diary)
+                }
+            }
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -314,6 +321,27 @@ struct SettingsView: View {
             Text("Get native iPhone reminders at 09:00, 13:00 and 19:00. A reminder is skipped when that meal is already logged.")
                 .font(.meCaption)
                 .foregroundStyle(Slate.textSecondary)
+        }
+        .card()
+    }
+
+    private var healthSyncCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Data & Integrations", systemImage: "heart.text.square")
+                .font(.meHeadline)
+                .foregroundStyle(Slate.textPrimary)
+
+            Toggle("Sync Apple Watch Active Energy", isOn: $isHealthKitSyncEnabled)
+                .font(.meBody)
+                .foregroundStyle(Slate.textPrimary)
+                .tint(Slate.textPrimary)
+
+            Text(isHealthKitSyncEnabled
+                 ? "When Health access is allowed, active energy is added to your daily calorie target and weight updates are imported. Logged water can also sync to Apple Health."
+                 : "HealthKit background syncing is paused. Your target uses your base TDEE and rollover; manually logged workouts still affect net calories.")
+                .font(.meCaption)
+                .foregroundStyle(Slate.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .card()
     }

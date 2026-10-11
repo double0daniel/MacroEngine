@@ -15,11 +15,19 @@ final class HealthKitManager {
     private let bodyMassType = HKObjectType.quantityType(forIdentifier: .bodyMass)!
     private let dietaryWaterType = HKObjectType.quantityType(forIdentifier: .dietaryWater)!
 
+    private var syncEnabled: Bool {
+        UserDefaults.standard.object(forKey: "isHealthKitSyncEnabled") as? Bool ?? true
+    }
+
     private init() {}
 
     /// Requests Health access, imports current values, and starts background updates.
     func requestAccessAndStartSync(diary: DiaryStore) async {
-        guard HKHealthStore.isHealthDataAvailable() else { return }
+        guard syncEnabled, HKHealthStore.isHealthDataAvailable() else {
+            stopObservers()
+            diary.updateActiveEnergyBurnedToday(0)
+            return
+        }
 
         if !observersStarted {
             let readTypes: Set<HKObjectType> = [activeEnergyType, bodyMassType]
@@ -39,9 +47,20 @@ final class HealthKitManager {
         await importLatestBodyMass(diary: diary)
     }
 
+    /// Starts or pauses HealthKit integration when the user changes the Settings toggle.
+    func setSyncEnabled(_ enabled: Bool, diary: DiaryStore) async {
+        guard enabled else {
+            stopObservers()
+            diary.updateActiveEnergyBurnedToday(0)
+            return
+        }
+        await requestAccessAndStartSync(diary: diary)
+    }
+
     /// Writes a newly logged hydration amount to HealthKit when write access is available.
     func saveWaterIntake(amountMl: Int, date: Date = .now) {
-        guard amountMl > 0,
+        guard syncEnabled,
+              amountMl > 0,
               healthStore.authorizationStatus(for: dietaryWaterType) == .sharingAuthorized else { return }
 
         let quantity = HKQuantity(unit: HKUnit.literUnit(with: .milli), doubleValue: Double(amountMl))
@@ -57,7 +76,7 @@ final class HealthKitManager {
             }
 
             Task { @MainActor [weak self, weak diary] in
-                guard let self, let diary else {
+                guard let self, let diary, self.syncEnabled else {
                     completionHandler()
                     return
                 }
@@ -74,6 +93,14 @@ final class HealthKitManager {
         observerQueries.append(query)
         healthStore.execute(query)
         healthStore.enableBackgroundDelivery(for: sampleType, frequency: .immediate) { _, _ in }
+    }
+
+    private func stopObservers() {
+        observerQueries.forEach { healthStore.stop($0) }
+        observerQueries.removeAll()
+        observersStarted = false
+        healthStore.disableBackgroundDelivery(for: activeEnergyType) { _, _ in }
+        healthStore.disableBackgroundDelivery(for: bodyMassType) { _, _ in }
     }
 
     private func refreshActiveEnergy(diary: DiaryStore) async {

@@ -4,6 +4,7 @@ import Charts
 struct DashboardView: View {
     @Environment(DiaryStore.self) private var diary
     @AppStorage("userName") private var userName = ""
+    @AppStorage("isHealthKitSyncEnabled") private var isHealthKitSyncEnabled = true
     @State private var searchCategory: MealCategory?
     @State private var userQuery: String = ""
     @State private var mascotResponse: String? = nil
@@ -262,7 +263,8 @@ struct DashboardView: View {
                                goal: diary.adjustedDailyCalorieTarget,
                                baseTarget: diary.baseDailyCalorieTarget,
                                rolloverAdjustment: diary.rolloverAdjustment,
-                               watchActiveBurn: diary.activeEnergyBurnedToday)
+                               watchActiveBurn: diary.activeEnergyBurnedToday,
+                               watchSyncEnabled: isHealthKitSyncEnabled)
         case .macroRings:
             MacroSegmentSummaryCard(totals: diary.totals, goals: diary.goals)
         case .macroBreakdown:
@@ -501,6 +503,7 @@ struct CalorieSummaryCard: View {
     var baseTarget: Double? = nil
     var rolloverAdjustment: Int = 0
     var watchActiveBurn: Int = 0
+    var watchSyncEnabled: Bool = true
 
     private var net: Double { eaten - Double(max(0, burned)) }
     private var remaining: Double { goal - net }
@@ -535,7 +538,7 @@ struct CalorieSummaryCard: View {
                 targetDetail(title: "Adjusted Net Target", value: "\(goal.whole) kcal", color: Slate.textPrimary)
             }
 
-            if watchActiveBurn > 0 {
+            if watchSyncEnabled {
                 HStack(spacing: 8) {
                     Image(systemName: "applewatch")
                         .foregroundStyle(Accent.calories)
