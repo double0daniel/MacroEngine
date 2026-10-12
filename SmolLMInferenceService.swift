@@ -12,27 +12,27 @@ enum OfflineQueryResponder {
             .replacingOccurrences(of: "’", with: "")
 
         if ["rollover", "roll over", "weekly budget", "carry over"].contains(where: { query.contains($0) }) {
-            return "[Fallback] Unused calories from yesterday roll over across your remaining week so you can stay on target overall!"
+            return "Unused calories from yesterday roll over across your remaining week so you can stay on target overall!"
         }
         if ["track", "progress", "on track", "doing today", "how am i"].contains(where: { query.contains($0) }) {
-            return "[Fallback] You have \(remainingCalories) kcal and \(remainingProtein)g protein left today. Focus on hitting your protein target!"
+            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left today. Focus on hitting your protein target!"
         }
         if ["workout", "exercise", "cardio", "gym", "burn", "burned"].contains(where: { query.contains($0) }) {
-            return "[Fallback] Logged workouts add burned calories back into your daily net budget to fuel your recovery properly."
+            return "Logged workouts add burned calories back into your daily net budget to fuel your recovery properly."
         }
         if ["pizza", "burger", "takeaway", "nandos", "mcdonalds", "junk", "cheat"].contains(where: { query.contains($0) }) {
-            return "[Fallback] You have \(remainingCalories) kcal and \(remainingProtein)g protein left. Enjoy it as long as it fits your calorie budget!"
+            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left. Enjoy it as long as it fits your calorie budget!"
         }
         if ["snack", "protein", "food", "eat", "hungry", "meal", "breakfast", "lunch", "dinner"].contains(where: { query.contains($0) }) {
-            return "[Fallback] You have \(remainingCalories) kcal and \(remainingProtein)g protein remaining. Try Greek yogurt, eggs, or chicken breast!"
+            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein remaining. Try Greek yogurt, eggs, or chicken breast!"
         }
-        return "[Fallback] You have \(remainingCalories) kcal and \(remainingProtein)g protein left today. Prioritize lean protein to hit your daily goal!"
+        return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left today. Prioritize lean protein to hit your daily goal!"
     }
 }
 
 private enum GroqAPIClient {
     private static let endpoint = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
-    private static let systemPrompt = "You are MacroEngine, a smart UK fitness coach mascot. Provide direct, conversational, and actionable advice tailored to the user's question. Do not just repeat remaining macros unless relevant. Keep under 25 words."
+    private static let systemPrompt = "You are MacroEngine, a helpful UK fitness mascot. Provide precise, natural, and conversational advice tailored directly to the user's question. Avoid repeating macro numbers unless necessary. Keep responses concise (15-25 words)."
 
     static func complete(
         cleanKey: String,
@@ -59,7 +59,7 @@ private enum GroqAPIClient {
                 ["role": "system", "content": systemPrompt],
                 [
                     "role": "user",
-                    "content": "Telemetry Context: \(remainingCalories) kcal, \(remainingProtein)g protein left today.\nUser Question: \(userQuery)"
+                    "content": "Context: \(remainingCalories) kcal, \(remainingProtein)g protein left today.\nUser query: \(userQuery)"
                 ]
             ]
         ]

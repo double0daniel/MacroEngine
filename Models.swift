@@ -580,8 +580,9 @@ final class DiaryStore {
     var rolloverAdjustment: Int { rolloverEnabled ? bankedCalories : 0 }
 
     var baseDailyCalorieTarget: Double {
-        guard let profile else { return goals.calories }
-        return MacroTargetCalculator.estimate(for: profile).tdee
+        // DiaryStore normalizes saved goals from their macro grams, so the
+        // dashboard's base target always matches the exact macro allocation.
+        goals.calories.isFinite ? max(0, goals.calories) : 0
     }
 
     var adjustedDailyCalorieTarget: Double {
@@ -871,12 +872,7 @@ final class DiaryStore {
 
     func finishOnboarding(profile: UserProfile, goals: Macros) {
         self.profile = profile
-        self.goals = Macros(
-            calories: max(0, goals.calories),
-            protein: max(0, goals.protein),
-            carbs: max(0, goals.carbs),
-            fat: max(0, goals.fat)
-        )
+        self.goals = Self.goalsWithExactMacroCalories(goals)
         hasCompletedOnboarding = true
         save(profile, key: Key.profile)
         save(self.goals, key: Key.goals)
@@ -888,12 +884,7 @@ final class DiaryStore {
     }
 
     func updateGoals(_ newGoals: Macros) {
-        goals = Macros(
-            calories: max(0, newGoals.calories),
-            protein: max(0, newGoals.protein),
-            carbs: max(0, newGoals.carbs),
-            fat: max(0, newGoals.fat)
-        )
+        goals = Self.goalsWithExactMacroCalories(newGoals)
         save(goals, key: Key.goals)
         syncWidgetData()
     }
@@ -1025,7 +1016,7 @@ final class DiaryStore {
 
     private func load() {
         entries = decode([DiaryEntry].self, key: Key.entries) ?? []
-        goals = decode(Macros.self, key: Key.goals) ?? goals
+        goals = Self.goalsWithExactMacroCalories(decode(Macros.self, key: Key.goals) ?? goals)
         profile = decode(UserProfile.self, key: Key.profile)
         hasCompletedOnboarding = UserDefaults.standard.bool(forKey: Key.onboarding)
         favoriteFoods = decode([FoodItem].self, key: Key.favorites) ?? []
@@ -1043,6 +1034,18 @@ final class DiaryStore {
         maxRolloverCap = min(2_000, max(100, UserDefaults.standard.object(forKey: Key.maxRolloverCap) as? Int ?? 500))
         bankedCalories = min(maxRolloverCap, max(0, UserDefaults.standard.object(forKey: Key.bankedCalories) as? Int ?? 0))
         lastRolloverProcessedDay = UserDefaults.standard.object(forKey: Key.lastRolloverDay) as? Date
+    }
+
+    private static func goalsWithExactMacroCalories(_ goals: Macros) -> Macros {
+        let protein = goals.protein.isFinite ? max(0, goals.protein) : 0
+        let carbs = goals.carbs.isFinite ? max(0, goals.carbs) : 0
+        let fat = goals.fat.isFinite ? max(0, goals.fat) : 0
+        return Macros(
+            calories: protein * 4 + carbs * 4 + fat * 9,
+            protein: protein,
+            carbs: carbs,
+            fat: fat
+        )
     }
 }
 

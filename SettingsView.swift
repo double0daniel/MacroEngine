@@ -52,7 +52,8 @@ struct SettingsView: View {
 
     private var settingsAreCurrent: Bool {
         guard diary.profile == draftProfile else { return false }
-        return diary.goals.protein == manualMacros.protein &&
+        return diary.goals.calories == manualMacros.calories &&
+            diary.goals.protein == manualMacros.protein &&
             diary.goals.carbs == manualMacros.carbs &&
             diary.goals.fat == manualMacros.fat
     }
