@@ -102,12 +102,24 @@ final class SmolLMInferenceService: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        let apiKey = Bundle.main.object(forInfoDictionaryKey: "OPENAI_API_KEY") as? String ?? ""
-        let cleanKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawKey = Bundle.main.object(forInfoDictionaryKey: "OPENAI_API_KEY") as? String ?? "NIL"
+        let cleanKey = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let keyStatus: String
+        if rawKey == "NIL" {
+            keyStatus = "missing from bundle"
+        } else if cleanKey.isEmpty {
+            keyStatus = "empty"
+        } else if cleanKey == "$(OPENAI_API_KEY)" {
+            keyStatus = "unexpanded build setting"
+        } else {
+            keyStatus = "present (\(cleanKey.count) characters)"
+        }
+        // Never print the secret itself: device logs can be copied or shared.
+        print("🔑 Debug OPENAI_API_KEY from Bundle: \(keyStatus)")
         let missingKeyMessage = "⚠️ OpenAI API key missing. Please check OPENAI_API_KEY in Info.plist."
         let temporaryErrorMessage = "Macro is taking a quick breather! Please check your connection and try again."
 
-        guard !cleanKey.isEmpty, cleanKey != "$(OPENAI_API_KEY)" else {
+        guard rawKey != "NIL", !cleanKey.isEmpty, cleanKey != "$(OPENAI_API_KEY)" else {
             mascotText = missingKeyMessage
             return missingKeyMessage
         }

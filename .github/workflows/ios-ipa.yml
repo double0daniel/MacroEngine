@@ -26,6 +26,10 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
+          if [[ -z "$OPENAI_API_KEY" ]]; then
+            echo "::error::The OPENAI_API_KEY repository secret is empty or unavailable."
+            exit 1
+          fi
           xcodebuild \
             -project MacroEngine.xcodeproj \
             -scheme MacroEngine \
@@ -34,8 +38,16 @@ jobs:
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             OPENAI_API_KEY="$OPENAI_API_KEY" \
+            INFOPLIST_KEY_OPENAI_API_KEY="$OPENAI_API_KEY" \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+          APP_PLIST="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/MacroEngine.app/Info.plist"
+          PLIST_API_KEY=$(/usr/libexec/PlistBuddy -c 'Print :OPENAI_API_KEY' "$APP_PLIST")
+          if [[ "$PLIST_API_KEY" != "$OPENAI_API_KEY" ]]; then
+            echo "::error::OPENAI_API_KEY was not embedded correctly in the app Info.plist."
+            exit 1
+          fi
 
       - name: Package unsigned IPA
         run: |
