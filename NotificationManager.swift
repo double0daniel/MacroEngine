@@ -103,8 +103,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
                       fireDate > now else { continue }
 
                 let content = UNMutableNotificationContent()
-                content.title = "MacroEngine Reminder"
-                content.body = "Hey \(greetingName), don't forget to log your \(window.category.title) to keep your weekly pace on target!"
+                content.title = "Macro 🐾"
+                content.body = reminderBody(for: window.category, greetingName: greetingName)
                 content.sound = .default
 
                 let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: fireDate)
@@ -116,6 +116,19 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
                 )
                 try? await center.add(request)
             }
+        }
+    }
+
+    private func reminderBody(for category: MealCategory, greetingName: String) -> String {
+        switch category {
+        case .breakfast:
+            return "Macro here, \(greetingName)! Don't forget to log breakfast and get your day started strong."
+        case .lunch:
+            return "Time to log your lunch, \(greetingName)! Let's keep that protein on track."
+        case .dinner:
+            return "How did we do on macros today, \(greetingName)? Tap to log dinner!"
+        case .snacks:
+            return "Macro here, \(greetingName)! Don't forget to log your snack."
         }
     }
 

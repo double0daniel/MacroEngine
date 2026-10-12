@@ -52,7 +52,7 @@ private enum GroqAPIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let payload: [String: Any] = [
-            "model": "llama-3.1-8b-instant",
+            "model": "openai/gpt-oss-20b",
             "max_completion_tokens": 60,
             "temperature": 0.7,
             "messages": [
