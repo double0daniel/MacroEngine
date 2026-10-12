@@ -43,6 +43,11 @@ jobs:
             build
 
           APP_PLIST="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/MacroEngine.app/Info.plist"
+          if /usr/libexec/PlistBuddy -c 'Print :OPENAI_API_KEY' "$APP_PLIST" >/dev/null 2>&1; then
+            /usr/libexec/PlistBuddy -c "Set :OPENAI_API_KEY $OPENAI_API_KEY" "$APP_PLIST"
+          else
+            /usr/libexec/PlistBuddy -c "Add :OPENAI_API_KEY string $OPENAI_API_KEY" "$APP_PLIST"
+          fi
           PLIST_API_KEY=$(/usr/libexec/PlistBuddy -c 'Print :OPENAI_API_KEY' "$APP_PLIST")
           if [[ "$PLIST_API_KEY" != "$OPENAI_API_KEY" ]]; then
             echo "::error::OPENAI_API_KEY was not embedded correctly in the app Info.plist."
