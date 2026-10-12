@@ -23,7 +23,7 @@ jobs:
 
       - name: Build unsigned iPhone app
         env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
           xcodebuild \
@@ -33,7 +33,7 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
-            GROQ_API_KEY="$GROQ_API_KEY" \
+            OPENAI_API_KEY="$OPENAI_API_KEY" \
             CODE_SIGNING_ALLOWED=NO \
             build
 

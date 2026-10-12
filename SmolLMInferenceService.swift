@@ -1,38 +1,9 @@
 import Combine
 import Foundation
 
-enum OfflineQueryResponder {
-    static func response(
-        for userQuery: String,
-        remainingCalories: Int,
-        remainingProtein: Int
-    ) -> String {
-        let query = userQuery.lowercased()
-            .replacingOccurrences(of: "'", with: "")
-            .replacingOccurrences(of: "’", with: "")
-
-        if ["rollover", "roll over", "weekly budget", "carry over"].contains(where: { query.contains($0) }) {
-            return "Unused calories from yesterday roll over across your remaining week so you can stay on target overall!"
-        }
-        if ["track", "progress", "on track", "doing today", "how am i"].contains(where: { query.contains($0) }) {
-            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left today. Focus on hitting your protein target!"
-        }
-        if ["workout", "exercise", "cardio", "gym", "burn", "burned"].contains(where: { query.contains($0) }) {
-            return "Logged workouts add burned calories back into your daily net budget to fuel your recovery properly."
-        }
-        if ["pizza", "burger", "takeaway", "nandos", "mcdonalds", "junk", "cheat"].contains(where: { query.contains($0) }) {
-            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left. Enjoy it as long as it fits your calorie budget!"
-        }
-        if ["snack", "protein", "food", "eat", "hungry", "meal", "breakfast", "lunch", "dinner"].contains(where: { query.contains($0) }) {
-            return "You have \(remainingCalories) kcal and \(remainingProtein)g protein remaining. Try Greek yogurt, eggs, or chicken breast!"
-        }
-        return "You have \(remainingCalories) kcal and \(remainingProtein)g protein left today. Prioritize lean protein to hit your daily goal!"
-    }
-}
-
-private enum GroqAPIClient {
-    private static let endpoint = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
-    private static let systemPrompt = "You are MacroEngine, a helpful UK fitness mascot. Provide precise, natural, and conversational advice tailored directly to the user's question. Avoid repeating macro numbers unless necessary. Keep responses concise (15-25 words)."
+private enum OpenAIAPIClient {
+    private static let endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
+    private static let systemPrompt = "You are Macro, a friendly UK fitness mascot. Provide precise, direct advice tailored to the user's macros/question in a conversational British tone (15-25 words)."
 
     static func complete(
         cleanKey: String,
@@ -41,19 +12,19 @@ private enum GroqAPIClient {
         userQuery: String
     ) async throws -> String {
         var configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 2.5
-        configuration.timeoutIntervalForResource = 2.5
+        configuration.timeoutIntervalForRequest = 6.0
+        configuration.timeoutIntervalForResource = 6.0
         let session = URLSession(configuration: configuration)
         defer { session.finishTasksAndInvalidate() }
 
-        var request = URLRequest(url: endpoint, timeoutInterval: 2.5)
+        var request = URLRequest(url: endpoint, timeoutInterval: 6.0)
         request.httpMethod = "POST"
         request.setValue("Bearer \(cleanKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let payload: [String: Any] = [
-            "model": "openai/gpt-oss-20b",
-            "max_completion_tokens": 60,
+            "model": "gpt-4o-mini",
+            "max_tokens": 60,
             "temperature": 0.7,
             "messages": [
                 ["role": "system", "content": systemPrompt],
@@ -67,23 +38,26 @@ private enum GroqAPIClient {
 
         let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw GroqRequestError.invalidResponse
+            throw OpenAIRequestError.invalidResponse
         }
-        guard (200..<300).contains(httpResponse.statusCode) else {
-            throw GroqRequestError.httpStatus(httpResponse.statusCode)
+        guard httpResponse.statusCode == 200 else {
+            if let body = String(data: data, encoding: .utf8) {
+                print("❌ OpenAI API Error Status \(httpResponse.statusCode): \(body)")
+            }
+            throw OpenAIRequestError.httpStatus(httpResponse.statusCode)
         }
 
-        let completion = try JSONDecoder().decode(GroqCompletion.self, from: data)
+        let completion = try JSONDecoder().decode(OpenAICompletion.self, from: data)
         guard let text = completion.choices.first?.message.content else {
-            throw GroqRequestError.emptyCompletion
+            throw OpenAIRequestError.emptyCompletion
         }
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { throw GroqRequestError.emptyCompletion }
+        guard !cleaned.isEmpty else { throw OpenAIRequestError.emptyCompletion }
         return cleaned
     }
 }
 
-private struct GroqCompletion: Decodable {
+private struct OpenAICompletion: Decodable {
     struct Choice: Decodable {
         struct Message: Decodable {
             let content: String?
@@ -93,7 +67,7 @@ private struct GroqCompletion: Decodable {
     let choices: [Choice]
 }
 
-private enum GroqRequestError: LocalizedError {
+private enum OpenAIRequestError: LocalizedError {
     case invalidResponse
     case httpStatus(Int)
     case emptyCompletion
@@ -101,16 +75,16 @@ private enum GroqRequestError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
-            return "Groq returned an invalid HTTP response."
+            return "OpenAI returned an invalid HTTP response."
         case let .httpStatus(status):
-            return "Groq returned HTTP status \(status)."
+            return "OpenAI returned HTTP status \(status)."
         case .emptyCompletion:
-            return "Groq returned an empty completion."
+            return "OpenAI returned an empty completion."
         }
     }
 }
 
-/// Sends Macro's request to Groq off the main actor and publishes UI state on the main actor.
+/// Sends Macro's request to OpenAI off the main actor and publishes UI state on the main actor.
 @MainActor
 final class SmolLMInferenceService: ObservableObject {
     static let shared = SmolLMInferenceService()
@@ -128,34 +102,29 @@ final class SmolLMInferenceService: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        let apiKey = Bundle.main.object(forInfoDictionaryKey: "GROQ_API_KEY") as? String ?? ""
+        let apiKey = Bundle.main.object(forInfoDictionaryKey: "OPENAI_API_KEY") as? String ?? ""
         let cleanKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let generatedText: String?
+        let missingKeyMessage = "⚠️ OpenAI API key missing. Please check OPENAI_API_KEY in Info.plist."
+        let temporaryErrorMessage = "Macro is taking a quick breather! Please check your connection and try again."
 
-        if cleanKey.isEmpty || cleanKey == "$(GROQ_API_KEY)" {
-            print("Groq API key is not configured; using offline coaching rules.")
-            generatedText = nil
-        } else {
-            generatedText = await Task.detached(priority: .userInitiated) {
-                do {
-                    return try await GroqAPIClient.complete(
-                        cleanKey: cleanKey,
-                        remainingCalories: remainingCalories,
-                        remainingProtein: remainingProtein,
-                        userQuery: userQuery
-                    )
-                } catch {
-                    print("\u{26A0}\u{FE0F} Groq Error: \(error.localizedDescription)")
-                    return nil
-                }
-            }.value
+        guard !cleanKey.isEmpty, cleanKey != "$(OPENAI_API_KEY)" else {
+            mascotText = missingKeyMessage
+            return missingKeyMessage
         }
 
-        let response = generatedText ?? OfflineQueryResponder.response(
-            for: userQuery,
-            remainingCalories: remainingCalories,
-            remainingProtein: remainingProtein
-        )
+        let response = await Task.detached(priority: .userInitiated) {
+            do {
+                return try await OpenAIAPIClient.complete(
+                    cleanKey: cleanKey,
+                    remainingCalories: remainingCalories,
+                    remainingProtein: remainingProtein,
+                    userQuery: userQuery
+                )
+            } catch {
+                print("❌ OpenAI API Request Error: \(error.localizedDescription)")
+                return temporaryErrorMessage
+            }
+        }.value
         mascotText = response
         return response
     }

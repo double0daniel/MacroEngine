@@ -50,8 +50,8 @@ targets:
         INFOPLIST_KEY_NSCameraUsageDescription: "MacroEngine uses the camera to scan food barcodes."
         INFOPLIST_KEY_NSHealthShareUsageDescription: "MacroEngine reads active energy and body weight to update your daily calorie allowance and weight history."
         INFOPLIST_KEY_NSHealthUpdateUsageDescription: "MacroEngine saves logged water intake to Apple Health."
-        GROQ_API_KEY: ""
-        INFOPLIST_KEY_GROQ_API_KEY: $(GROQ_API_KEY)
+        OPENAI_API_KEY: ""
+        INFOPLIST_KEY_OPENAI_API_KEY: $(OPENAI_API_KEY)
         INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
         CODE_SIGN_ENTITLEMENTS: MacroEngine.entitlements
     scheme:

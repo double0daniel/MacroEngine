@@ -22,6 +22,8 @@ jobs:
         run: xcodegen generate
 
       - name: Build unsigned iPhone app
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
           xcodebuild \
@@ -31,6 +33,7 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            OPENAI_API_KEY="$OPENAI_API_KEY" \
             CODE_SIGNING_ALLOWED=NO \
             build
 

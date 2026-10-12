@@ -75,7 +75,10 @@ final class FoodSearchViewModel {
 
     func acceptBarcodeLookup(barcode: String, food: FoodItem?, status: FoodAPIStatus, error: String?) {
         apiStatus = status
-        guard food == nil else { return }
+        guard food == nil else {
+            barcodeError = nil
+            return
+        }
         barcodeError = error ?? "Open Food Facts doesn't have nutrition data for \(barcode) yet. Try searching by name."
     }
 

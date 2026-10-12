@@ -379,19 +379,24 @@ struct CustomMeal: Identifiable, Codable, Hashable, Sendable {
     var createdAt: Date = .now
     var sourceServings: Int = 1
     var sourceURL: String?
+    var numberOfServings: Int
+    var isMealPrep: Bool
 
     init(id: UUID = UUID(), name: String, ingredients: [MealIngredient], createdAt: Date = .now,
-         sourceServings: Int = 1, sourceURL: String? = nil) {
+         sourceServings: Int = 1, sourceURL: String? = nil,
+         numberOfServings: Int = 1, isMealPrep: Bool = false) {
         self.id = id
         self.name = name
         self.ingredients = ingredients
         self.createdAt = createdAt
         self.sourceServings = max(1, sourceServings)
         self.sourceURL = sourceURL
+        self.numberOfServings = max(1, numberOfServings)
+        self.isMealPrep = isMealPrep
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, ingredients, createdAt, sourceServings, sourceURL
+        case id, name, ingredients, createdAt, sourceServings, sourceURL, numberOfServings, isMealPrep
     }
 
     init(from decoder: Decoder) throws {
@@ -402,10 +407,20 @@ struct CustomMeal: Identifiable, Codable, Hashable, Sendable {
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
         sourceServings = max(1, try container.decodeIfPresent(Int.self, forKey: .sourceServings) ?? 1)
         sourceURL = try container.decodeIfPresent(String.self, forKey: .sourceURL)
+        numberOfServings = max(1, try container.decodeIfPresent(Int.self, forKey: .numberOfServings) ?? 1)
+        isMealPrep = try container.decodeIfPresent(Bool.self, forKey: .isMealPrep) ?? false
     }
 
     var totals: Macros {
         ingredients.reduce(.zero) { $0 + $1.macros }
+    }
+
+    var perServingTotals: Macros {
+        totals.scaled(by: 1 / Double(max(1, numberOfServings)))
+    }
+
+    var totalBatchWeightGrams: Double {
+        ingredients.reduce(0) { $0 + max(0, $1.grams) }
     }
 }
 
@@ -646,11 +661,15 @@ final class DiaryStore {
         NotificationManager.shared.mealWasLogged(category: category, date: date)
     }
 
-    func log(_ meal: CustomMeal, category: MealCategory, date: Date = .now) {
+    func log(_ meal: CustomMeal, category: MealCategory, date: Date = .now, portions: Double = 1) {
+        guard portions.isFinite, portions > 0 else { return }
+        let portionScale = meal.isMealPrep
+            ? portions / Double(max(1, meal.numberOfServings))
+            : 1
         let startingCount = entries.count
         for ingredient in meal.ingredients {
             guard ingredient.grams.isFinite, ingredient.grams > 0 else { continue }
-            entries.append(DiaryEntry(food: ingredient.food, grams: ingredient.grams, date: date,
+            entries.append(DiaryEntry(food: ingredient.food, grams: ingredient.grams * portionScale, date: date,
                                       category: category, customMealID: meal.id, customMealName: meal.name))
         }
         save(entries, key: Key.entries)
