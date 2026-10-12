@@ -57,6 +57,16 @@ final class HealthKitManager {
         await requestAccessAndStartSync(diary: diary)
     }
 
+    /// Rechecks the active-energy contribution after diary mutations so the
+    /// dashboard target and widget snapshot stay aligned with the current day.
+    func diaryDidChange(_ diary: DiaryStore) {
+        guard syncEnabled, observersStarted else { return }
+        Task { @MainActor [weak self, weak diary] in
+            guard let self, let diary, self.syncEnabled else { return }
+            await self.refreshActiveEnergy(diary: diary)
+        }
+    }
+
     /// Writes a newly logged hydration amount to HealthKit when write access is available.
     func saveWaterIntake(amountMl: Int, date: Date = .now) {
         guard syncEnabled,

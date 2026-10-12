@@ -21,6 +21,7 @@ targets:
       - Models.swift
       - Components.swift
       - TrackerViews.swift
+      - EditLoggedFoodSheet.swift
       - SettingsView.swift
       - DashboardView.swift
       - LocalAIEngine.swift

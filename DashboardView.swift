@@ -726,7 +726,7 @@ struct MacroProgressRow: View {
 
 struct DiarySection: View {
     @Environment(DiaryStore.self) private var diary
-    @State private var entryToRate: DiaryEntry?
+    @State private var activeSheet: DiarySectionSheet?
     let entries: [DiaryEntry]
     let onDelete: (DiaryEntry) -> Void
     let onAdd: (MealCategory) -> Void
@@ -743,9 +743,14 @@ struct DiarySection: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .sheet(item: $entryToRate) { entry in
-            SatietyRatingEditor(entry: entry) { rating in
-                diary.updateSatietyRating(rating, for: entry)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .edit(let entry):
+                EditLoggedFoodSheet(entry: entry)
+            case .rate(let entry):
+                SatietyRatingEditor(entry: entry) { rating in
+                    diary.updateSatietyRating(rating, for: entry)
+                }
             }
         }
     }
@@ -786,13 +791,27 @@ struct DiarySection: View {
                 Divider().overlay(Slate.stroke)
                 ForEach(categoryEntries) { entry in
                     DiaryEntryRow(entry: entry) {
-                        entryToRate = entry
+                        activeSheet = .rate(entry)
                     }
-                        .contextMenu {
-                            Button(role: .destructive) { onDelete(entry) } label: {
-                                Label("Remove entry", systemImage: "trash")
-                            }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) { onDelete(entry) } label: {
+                            Label("Delete", systemImage: "trash")
                         }
+                    }
+                    .swipeActions(edge: .leading) {
+                        Button { activeSheet = .edit(entry) } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
+                        .tint(Accent.protein)
+                    }
+                    .contextMenu {
+                        Button { activeSheet = .edit(entry) } label: {
+                            Label("Edit entry", systemImage: "pencil")
+                        }
+                        Button(role: .destructive) { onDelete(entry) } label: {
+                            Label("Remove entry", systemImage: "trash")
+                        }
+                    }
                     if entry.id != categoryEntries.last?.id {
                         Divider().overlay(Slate.stroke).padding(.leading, 16)
                     }
@@ -808,6 +827,18 @@ struct DiarySection: View {
         }
         .background(Slate.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Slate.stroke.opacity(0.6), lineWidth: 1))
+    }
+}
+
+private enum DiarySectionSheet: Identifiable {
+    case edit(DiaryEntry)
+    case rate(DiaryEntry)
+
+    var id: String {
+        switch self {
+        case .edit(let entry): "edit-\(entry.id.uuidString)"
+        case .rate(let entry): "rate-\(entry.id.uuidString)"
+        }
     }
 }
 

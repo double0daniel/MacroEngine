@@ -680,6 +680,27 @@ final class DiaryStore {
     }
 
     func remove(_ entry: DiaryEntry) {
+        deleteLoggedEntry(entry)
+    }
+
+    /// Replaces a logged entry while keeping its identity and metadata intact.
+    func updateLoggedEntry(_ entry: DiaryEntry) {
+        guard entry.grams.isFinite, entry.grams > 0,
+              let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
+        let previous = entries[index]
+        entries[index] = entry
+        save(entries, key: Key.entries)
+        syncWidgetData()
+
+        if previous.category != entry.category || !Calendar.current.isDate(previous.date, inSameDayAs: entry.date) {
+            NotificationManager.shared.mealWasLogged(category: previous.category, date: previous.date)
+            NotificationManager.shared.mealWasLogged(category: entry.category, date: entry.date)
+        }
+    }
+
+    /// Deletes a diary entry and immediately refreshes all derived daily totals.
+    func deleteLoggedEntry(_ entry: DiaryEntry) {
+        guard entries.contains(where: { $0.id == entry.id }) else { return }
         entries.removeAll { $0.id == entry.id }
         save(entries, key: Key.entries)
         syncWidgetData()
@@ -1031,6 +1052,7 @@ final class DiaryStore {
             waterTarget: waterGoalMl,
             foodLogStreak: foodLogStreak
         )
+        HealthKitManager.shared.diaryDidChange(self)
     }
 
     private func load() {
