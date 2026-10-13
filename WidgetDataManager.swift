@@ -1,106 +1,63 @@
 import Foundation
 import WidgetKit
 
-/// Shared bridge between the main app, App Intents, and WidgetKit timelines.
+/// Shared bridge between the app process and the WidgetKit extension.
 final class WidgetDataManager: @unchecked Sendable {
     static let shared = WidgetDataManager()
-    static let appGroupID = "group.com.macroengine.app"
+    static let appGroupID = "group.com.double0daniel.MacroEngine"
 
-    private let snapshotKey = "macroengine.widget.snapshot.v1"
-    private let defaults = UserDefaults(suiteName: WidgetDataManager.appGroupID) ?? .standard
+    private let snapshotKey = "macroengine.widget.data.v2"
+    private let defaults = UserDefaults(suiteName: WidgetDataManager.appGroupID)
 
     private init() {}
 
-    /// Updates eaten totals while preserving the latest goals stored by the app.
-    func updateAndReload(calories: Double, protein: Double, carbs: Double, fat: Double, water: Int) {
-        var snapshot = read()
-        snapshot.day = Calendar.current.startOfDay(for: .now)
-        snapshot.caloriesEaten = Self.nonnegative(calories)
-        snapshot.proteinEaten = Self.nonnegative(protein)
-        snapshot.carbsEaten = Self.nonnegative(carbs)
-        snapshot.fatEaten = Self.nonnegative(fat)
-        snapshot.waterConsumedMl = max(0, water)
-        saveAndReload(snapshot)
+    /// Persists the diary snapshot and immediately asks WidgetKit to refresh all tiles.
+    @MainActor
+    func updateWidgetData(from source: any WidgetDataProviding) {
+        saveAndReload(source.makeWidgetData())
     }
 
-    /// Full update used by DiaryStore so targets and streak remain current too.
-    func updateAndReload(
-        calories: Double,
-        protein: Double,
-        carbs: Double,
-        fat: Double,
-        water: Int,
-        calorieTarget: Double,
-        proteinTarget: Double,
-        carbsTarget: Double,
-        fatTarget: Double,
-        waterTarget: Int,
-        foodLogStreak: Int
-    ) {
-        let snapshot = MacroWidgetSnapshot(
-            day: Calendar.current.startOfDay(for: .now),
-            caloriesEaten: Self.nonnegative(calories),
-            calorieTarget: Self.nonnegative(calorieTarget),
-            proteinEaten: Self.nonnegative(protein),
-            proteinGoal: Self.nonnegative(proteinTarget),
-            carbsEaten: Self.nonnegative(carbs),
-            carbsGoal: Self.nonnegative(carbsTarget),
-            fatEaten: Self.nonnegative(fat),
-            fatGoal: Self.nonnegative(fatTarget),
-            waterConsumedMl: max(0, water),
-            waterGoalMl: max(1, waterTarget),
-            foodLogStreak: max(0, foodLogStreak)
-        )
-        saveAndReload(snapshot)
-    }
-
-    func read() -> MacroWidgetSnapshot {
-        guard let data = defaults.data(forKey: snapshotKey),
-              var snapshot = try? JSONDecoder().decode(MacroWidgetSnapshot.self, from: data) else {
+    func read() -> WidgetData {
+        guard let defaults,
+              let data = defaults.data(forKey: snapshotKey),
+              var widgetData = try? JSONDecoder().decode(WidgetData.self, from: data) else {
             return .empty()
         }
-        if !Calendar.current.isDateInToday(snapshot.day) {
-            snapshot.day = Calendar.current.startOfDay(for: .now)
-            snapshot.caloriesEaten = 0
-            snapshot.proteinEaten = 0
-            snapshot.carbsEaten = 0
-            snapshot.fatEaten = 0
-            snapshot.waterConsumedMl = 0
-        }
-        return snapshot
+
+        guard !Calendar.current.isDateInToday(widgetData.day) else { return widgetData }
+        let previousDay = Calendar.current.date(byAdding: .day, value: -1, to: .now) ?? .distantPast
+        let streakCarriesForward = Calendar.current.isDate(widgetData.day, inSameDayAs: previousDay)
+        widgetData.day = Calendar.current.startOfDay(for: .now)
+        widgetData.consumedCalories = 0
+        widgetData.consumedProtein = 0
+        widgetData.consumedCarbs = 0
+        widgetData.consumedFat = 0
+        widgetData.waterIntakeOz = 0
+        widgetData.isStreakActiveToday = false
+        if !streakCarriesForward { widgetData.currentStreakDays = 0 }
+        return widgetData
     }
 
     func waterAmount(for date: Date = .now) -> Int {
-        let snapshot = read()
-        guard Calendar.current.isDate(snapshot.day, inSameDayAs: date) else { return 0 }
-        return max(0, snapshot.waterConsumedMl)
+        let widgetData = read()
+        guard Calendar.current.isDate(widgetData.day, inSameDayAs: date) else { return 0 }
+        return Int((Double(widgetData.waterIntakeOz) * 29.5735).rounded())
     }
 
     func reset() {
-        defaults.removeObject(forKey: snapshotKey)
+        defaults?.removeObject(forKey: snapshotKey)
         WidgetCenter.shared.reloadAllTimelines()
     }
 
-    @discardableResult
-    func addWaterFromWidget(_ amountMl: Int, date: Date = .now) -> Int {
-        guard amountMl > 0 else { return waterAmount(for: date) }
-        var snapshot = read()
-        if !Calendar.current.isDate(snapshot.day, inSameDayAs: date) {
-            snapshot = .empty(for: date)
+    private func saveAndReload(_ widgetData: WidgetData) {
+        if let defaults, let data = try? JSONEncoder().encode(widgetData) {
+            defaults.set(data, forKey: snapshotKey)
         }
-        snapshot.day = Calendar.current.startOfDay(for: date)
-        snapshot.waterConsumedMl = max(0, snapshot.waterConsumedMl) + amountMl
-        saveAndReload(snapshot)
-        return snapshot.waterConsumedMl
-    }
-
-    private func saveAndReload(_ snapshot: MacroWidgetSnapshot) {
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        defaults.set(data, forKey: snapshotKey)
         WidgetCenter.shared.reloadAllTimelines()
     }
 
-    private static func nonnegative(_ value: Double) -> Double {
-        value.isFinite ? max(0, value) : 0
+    static func safeInt(_ value: Double) -> Int {
+        guard value.isFinite, value < Double(Int.max), value > Double(Int.min) else { return 0 }
+        return Int(value.rounded())
     }
 }

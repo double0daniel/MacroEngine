@@ -1039,19 +1039,7 @@ final class DiaryStore {
 
     private func syncWidgetData() {
         guard persist else { return }
-        WidgetDataManager.shared.updateAndReload(
-            calories: totals.calories,
-            protein: totals.protein,
-            carbs: totals.carbs,
-            fat: totals.fat,
-            water: waterConsumedTodayMl,
-            calorieTarget: adjustedDailyCalorieTarget,
-            proteinTarget: goals.protein,
-            carbsTarget: goals.carbs,
-            fatTarget: goals.fat,
-            waterTarget: waterGoalMl,
-            foodLogStreak: foodLogStreak
-        )
+        WidgetDataManager.shared.updateWidgetData(from: self)
         HealthKitManager.shared.diaryDidChange(self)
     }
 
@@ -1086,6 +1074,55 @@ final class DiaryStore {
             protein: protein,
             carbs: carbs,
             fat: fat
+        )
+    }
+}
+
+extension DiaryStore: WidgetDataProviding {
+    func makeWidgetData() -> WidgetData {
+        let calendar = Calendar.current
+        let now = Date.now
+        let weekStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? calendar.startOfDay(for: now)
+        let elapsedDays = min(7, max(1, (calendar.dateComponents([.day], from: weekStart, to: now).day ?? 0) + 1))
+        let entriesThisWeek = entries.filter { $0.date >= weekStart && $0.date <= now }
+        let weeklyConsumed = entriesThisWeek.reduce(0.0) { $0 + $1.macros.calories }
+        let weeklyTarget = baseDailyCalorieTarget * 7
+        let weeklyDelta = weeklyConsumed - baseDailyCalorieTarget * Double(elapsedDays)
+        let projectedChange = weeklyDelta / Double(elapsedDays) * 7 / 7_700
+
+        let pacingStatus: String
+        switch profile?.goal.primaryGoal ?? .maingain {
+        case .cutting:
+            pacingStatus = projectedChange < -1 ? "Fast loss pace" : (projectedChange < -0.05 ? "Cutting pace" : "Deficit needed")
+        case .bulking:
+            pacingStatus = (0.2...0.4).contains(projectedChange) ? "Clean bulk pace" : (projectedChange < 0.2 ? "Surplus needed" : "Fast gain pace")
+        case .maingain:
+            pacingStatus = abs(projectedChange) <= 0.05 ? "Maintenance trajectory" : "Adjust toward maintenance"
+        }
+
+        let loggedToday = todaysEntries.isEmpty == false
+        let mlPerOunce = 29.5735
+        return WidgetData(
+            day: calendar.startOfDay(for: now),
+            consumedCalories: WidgetDataManager.safeInt(totals.calories),
+            targetCalories: WidgetDataManager.safeInt(adjustedDailyCalorieTarget),
+            calorieRollover: rolloverAdjustment,
+            consumedProtein: WidgetDataManager.safeInt(totals.protein),
+            targetProtein: WidgetDataManager.safeInt(goals.protein),
+            consumedCarbs: WidgetDataManager.safeInt(totals.carbs),
+            targetCarbs: WidgetDataManager.safeInt(goals.carbs),
+            consumedFat: WidgetDataManager.safeInt(totals.fat),
+            targetFat: WidgetDataManager.safeInt(goals.fat),
+            waterIntakeOz: Int((Double(waterConsumedTodayMl) / mlPerOunce).rounded()),
+            waterGoalOz: max(1, Int((Double(waterGoalMl) / mlPerOunce).rounded())),
+            currentStreakDays: foodLogStreak,
+            isStreakActiveToday: loggedToday,
+            weeklyCalorieTarget: WidgetDataManager.safeInt(weeklyTarget),
+            weeklyCalorieConsumed: WidgetDataManager.safeInt(weeklyConsumed),
+            daysElapsed: elapsedDays,
+            netCalorieSurplusDeficit: WidgetDataManager.safeInt(weeklyDelta),
+            projectedWeightChangeKg: projectedChange.isFinite ? projectedChange : 0,
+            pacingStatus: pacingStatus
         )
     }
 }
