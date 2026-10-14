@@ -654,29 +654,42 @@ final class DiaryStore {
     func add(_ food: FoodItem, grams: Double, category: MealCategory = .snacks, date: Date = .now,
              customMealID: UUID? = nil, customMealName: String? = nil) {
         guard grams.isFinite, grams > 0 else { return }
-        entries.append(DiaryEntry(food: food, grams: grams, date: date, category: category,
+        addLoggedEntry(DiaryEntry(food: food, grams: grams, date: date, category: category,
                                   customMealID: customMealID, customMealName: customMealName))
+    }
+
+    func addLoggedEntry(_ entry: DiaryEntry) {
+        guard entry.grams.isFinite, entry.grams > 0 else { return }
+        entries.append(entry)
         save(entries, key: Key.entries)
         syncWidgetData()
-        NotificationManager.shared.mealWasLogged(category: category, date: date)
+        NotificationManager.shared.mealWasLogged(category: entry.category, date: entry.date)
     }
 
     func log(_ meal: CustomMeal, category: MealCategory, date: Date = .now, portions: Double = 1) {
         guard portions.isFinite, portions > 0 else { return }
+        let batchGrams = meal.totalBatchWeightGrams
+        guard batchGrams.isFinite, batchGrams > 0 else { return }
         let portionScale = meal.isMealPrep
             ? portions / Double(max(1, meal.numberOfServings))
             : 1
-        let startingCount = entries.count
-        for ingredient in meal.ingredients {
-            guard ingredient.grams.isFinite, ingredient.grams > 0 else { continue }
-            entries.append(DiaryEntry(food: ingredient.food, grams: ingredient.grams * portionScale, date: date,
-                                      category: category, customMealID: meal.id, customMealName: meal.name))
-        }
-        save(entries, key: Key.entries)
-        syncWidgetData()
-        if entries.count > startingCount {
-            NotificationManager.shared.mealWasLogged(category: category, date: date)
-        }
+        let batchMacros = meal.totals
+        let consolidatedFood = FoodItem(
+            id: "custom-meal:\(meal.id.uuidString)",
+            name: meal.name,
+            brand: meal.ingredients.map { $0.food.name }.joined(separator: ", "),
+            per100g: batchMacros.scaled(by: 100 / batchGrams),
+            servingGrams: batchGrams,
+            imageURL: nil
+        )
+        addLoggedEntry(DiaryEntry(
+            food: consolidatedFood,
+            grams: batchGrams * portionScale,
+            date: date,
+            category: category,
+            customMealID: meal.id,
+            customMealName: meal.name
+        ))
     }
 
     func remove(_ entry: DiaryEntry) {
